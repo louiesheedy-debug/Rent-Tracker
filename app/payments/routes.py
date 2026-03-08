@@ -7,11 +7,13 @@ from .csv_parser import parse_csv
 from .matcher import find_best_match, AUTO_MATCH_THRESHOLD, SUGGEST_THRESHOLD
 from .allocator import allocate_payment, deallocate_payment
 from ..models import db, CsvImport, BankTransaction, Tenant, Payment
+from ..utils import login_required
 
 OWNER_ID = 1
 
 
 @bp.route("/import/upload", methods=["GET", "POST"])
+@login_required
 def upload():
     form = CsvUploadForm()
     if form.validate_on_submit():
@@ -98,6 +100,7 @@ def upload():
 
 
 @bp.route("/import/<int:import_id>/review", methods=["GET", "POST"])
+@login_required
 def review(import_id):
     csv_import = CsvImport.query.filter_by(
         id=import_id, user_id=OWNER_ID
@@ -195,6 +198,7 @@ def _apply_confirmed_transactions(csv_import, tenants):
 
 
 @bp.route("/payment/<int:payment_id>/delete", methods=["POST"])
+@login_required
 def delete_payment(payment_id):
     payment = Payment.query.get_or_404(payment_id)
     tenant = payment.tenant

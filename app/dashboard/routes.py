@@ -4,6 +4,7 @@ from flask import render_template
 from . import bp
 from ..models import Tenant, RentPeriod
 from ..tenants.logic import compute_tenant_status, extend_rent_periods
+from ..utils import login_required
 
 STATUS_ORDER = {"overdue": 0, "partial": 1, "unpaid": 2, "paid": 3}
 
@@ -11,6 +12,7 @@ OWNER_ID = 1
 
 
 @bp.route("/")
+@login_required
 def index():
     tenants = Tenant.query.filter_by(user_id=OWNER_ID, is_active=True).all()
 
