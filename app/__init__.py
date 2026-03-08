@@ -14,14 +14,12 @@ def create_app():
     csrf.init_app(app)
 
     # Register blueprints
-    from .auth import bp as auth_bp
     from .dashboard import bp as dashboard_bp
     from .tenants import bp as tenants_bp
     from .payments import bp as payments_bp
     from .emails import bp as emails_bp
     from .settings import bp as settings_bp
 
-    app.register_blueprint(auth_bp)
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(tenants_bp)
     app.register_blueprint(payments_bp)

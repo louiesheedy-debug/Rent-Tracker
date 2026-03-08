@@ -5,7 +5,7 @@ from . import bp
 from .forms import TenantForm
 from .logic import generate_rent_periods, extend_rent_periods, compute_tenant_status
 from ..models import db, Tenant, Property, Payment, RentPeriod
-from ..utils import login_required
+
 from flask_wtf import FlaskForm
 from wtforms import DecimalField, StringField, TextAreaField
 from wtforms.fields import DateField
@@ -22,7 +22,7 @@ class ManualPaymentForm(FlaskForm):
 
 
 @bp.route("/add", methods=["GET", "POST"])
-@login_required
+
 def add():
     form = TenantForm()
     if form.validate_on_submit():
@@ -59,7 +59,7 @@ def add():
 
 
 @bp.route("/<int:tenant_id>", methods=["GET", "POST"])
-@login_required
+
 def detail(tenant_id):
     tenant = Tenant.query.filter_by(id=tenant_id, user_id=OWNER_ID).first_or_404()
     extend_rent_periods(tenant)
@@ -123,7 +123,7 @@ def detail(tenant_id):
 
 
 @bp.route("/<int:tenant_id>/edit", methods=["GET", "POST"])
-@login_required
+
 def edit(tenant_id):
     tenant = Tenant.query.filter_by(id=tenant_id, user_id=OWNER_ID).first_or_404()
     form = TenantForm(obj=tenant)
@@ -173,7 +173,7 @@ def edit(tenant_id):
 
 
 @bp.route("/<int:tenant_id>/deactivate", methods=["GET", "POST"])
-@login_required
+
 def deactivate(tenant_id):
     tenant = Tenant.query.filter_by(id=tenant_id, user_id=OWNER_ID).first_or_404()
     if request.method == "POST":

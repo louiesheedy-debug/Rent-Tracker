@@ -1,7 +1,7 @@
 from flask import render_template, redirect, url_for, flash
 from . import bp
 from .forms import SettingsForm
-from ..utils import login_required
+
 from ..models import db, Settings
 from ..emails.sender import send_test_email
 
@@ -9,7 +9,7 @@ OWNER_ID = 1
 
 
 @bp.route("/", methods=["GET", "POST"])
-@login_required
+
 def index():
     settings = Settings.query.filter_by(user_id=OWNER_ID).first()
     if not settings:

@@ -2,13 +2,13 @@ from datetime import date, timedelta
 from flask import render_template, request
 from . import bp
 from ..models import EmailLog, Tenant
-from ..utils import login_required
+
 
 OWNER_ID = 1
 
 
 @bp.route("/history")
-@login_required
+
 def history():
     tenant_id = request.args.get("tenant_id", type=int)
     days = request.args.get("days", 30, type=int)
