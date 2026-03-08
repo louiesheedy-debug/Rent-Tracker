@@ -1,0 +1,9 @@
+flask>=3.0.0
+flask-sqlalchemy>=3.1.0
+flask-wtf>=1.2.1
+wtforms>=3.1.1
+python-dateutil>=2.9.0
+apscheduler>=3.10.4
+pytz>=2024.1
+email-validator>=2.1.0
+gunicorn>=21.2.0

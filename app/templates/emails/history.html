@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Email History - Rent Tracker{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+    <h2 class="mb-4">Email History</h2>
+
+    <!-- Filters -->
+    <form method="GET" class="row g-2 mb-4 align-items-end">
+      <div class="col-auto">
+        <label class="form-label">Tenant</label>
+        <select name="tenant_id" class="form-select form-select-sm">
+          <option value="">All tenants</option>
+          {% for t in tenants %}
+          <option value="{{ t.id }}" {% if selected_tenant_id == t.id %}selected{% endif %}>{{ t.full_name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-auto">
+        <label class="form-label">Last N days</label>
+        <select name="days" class="form-select form-select-sm">
+          {% for d in [7, 14, 30, 60, 90] %}
+          <option value="{{ d }}" {% if days == d %}selected{% endif %}>{{ d }} days</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-sm btn-outline-primary">Filter</button>
+      </div>
+    </form>
+
+    {% if logs %}
+    <div class="card shadow-sm">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Date Sent</th>
+              <th>Tenant</th>
+              <th>Days Overdue</th>
+              <th>Amount Overdue</th>
+              <th>Status</th>
+              <th>Error</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for log in logs %}
+            <tr>
+              <td class="small">{{ log.sent_at.strftime('%d/%m/%Y %H:%M') }}</td>
+              <td>
+                <a href="{{ url_for('tenants.detail', tenant_id=log.tenant_id) }}">{{ log.tenant.full_name }}</a>
+              </td>
+              <td>{{ log.days_overdue }}</td>
+              <td>${{ "%.2f"|format(log.amount_overdue) }}</td>
+              <td>
+                {% if log.status == "sent" %}
+                  <span class="badge bg-success">Sent</span>
+                {% else %}
+                  <span class="badge bg-danger">Failed</span>
+                {% endif %}
+              </td>
+              <td class="small text-muted">{{ log.error_message or "—" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% else %}
+    <div class="text-center py-5 text-muted">
+      <i class="bi bi-envelope-x fs-1"></i>
+      <p class="mt-2">No email logs found for the selected filters.</p>
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}

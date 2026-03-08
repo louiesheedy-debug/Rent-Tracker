@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Deactivate Tenant - Rent Tracker{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center mt-4">
+  <div class="col-md-5">
+    <div class="card shadow-sm border-danger">
+      <div class="card-body p-4 text-center">
+        <i class="bi bi-person-x-fill fs-1 text-danger"></i>
+        <h3 class="mt-2">Deactivate Tenant</h3>
+        <p class="text-muted">
+          Are you sure you want to deactivate <strong>{{ tenant.full_name }}</strong>?
+        </p>
+        <p class="small text-muted">
+          Their history will be preserved. They will no longer appear on the dashboard
+          or receive email reminders.
+        </p>
+        <form method="POST" class="d-inline-flex gap-2 mt-2">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-danger">Yes, Deactivate</button>
+          <a href="{{ url_for('tenants.detail', tenant_id=tenant.id) }}" class="btn btn-outline-secondary">Cancel</a>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

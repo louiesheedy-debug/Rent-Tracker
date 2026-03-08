@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% block title %}{{ tenant.full_name }} - Rent Tracker{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-11">
+
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <div>
+        <h2 class="mb-0">{{ tenant.full_name }}</h2>
+        <div class="text-muted">{{ tenant.email }}</div>
+        {% if tenant.property %}
+          <div class="text-muted small">{{ tenant.property.full_address() }}</div>
+        {% endif %}
+      </div>
+      <div class="d-flex gap-2">
+        {% if status == "overdue" %}
+          <span class="badge bg-danger fs-6">OVERDUE</span>
+        {% elif status == "partial" %}
+          <span class="badge bg-warning text-dark fs-6">PARTIAL</span>
+        {% elif status == "unpaid" %}
+          <span class="badge bg-secondary fs-6">UNPAID</span>
+        {% else %}
+          <span class="badge bg-success fs-6">PAID</span>
+        {% endif %}
+        <a href="{{ url_for('tenants.edit', tenant_id=tenant.id) }}" class="btn btn-outline-secondary btn-sm">Edit</a>
+        <a href="{{ url_for('tenants.deactivate', tenant_id=tenant.id) }}" class="btn btn-outline-danger btn-sm">Deactivate</a>
+      </div>
+    </div>
+
+    <div class="row g-2 mb-4">
+      <div class="col-auto"><span class="badge bg-light text-dark border">Fortnightly</span></div>
+      <div class="col-auto"><span class="badge bg-light text-dark border">${{ "%.2f"|format(tenant.weekly_rent) }}/fortnight</span></div>
+      <div class="col-auto"><span class="badge bg-light text-dark border">Lease from {{ tenant.lease_start_date }}</span></div>
+    </div>
+
+    <div class="row g-4">
+
+      <!-- Rent Periods -->
+      <div class="col-lg-7">
+        <div class="card shadow-sm">
+          <div class="card-header"><strong>Rent Periods</strong></div>
+          {% if rent_periods %}
+          <div class="table-responsive">
+            <table class="table table-sm mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Period</th>
+                  <th>Due</th>
+                  <th>Rent</th>
+                  <th>Late Fee</th>
+                  <th>Paid</th>
+                  <th>Balance</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for rp in rent_periods %}
+                <tr>
+                  <td class="small text-muted">{{ rp.period_start }} – {{ rp.period_end }}</td>
+                  <td class="small">{{ rp.due_date }}</td>
+                  <td>${{ "%.2f"|format(rp.amount_due) }}</td>
+                  <td>
+                    {% if rp.late_fee and rp.late_fee > 0 %}
+                      <span class="text-danger small">${{ "%.2f"|format(rp.late_fee) }}</span>
+                    {% else %}
+                      <span class="text-muted small">—</span>
+                    {% endif %}
+                  </td>
+                  <td>${{ "%.2f"|format(rp.amount_paid) }}</td>
+                  <td>
+                    {% set bal = rp.balance() %}
+                    {% if bal > 0 %}
+                      <span class="text-danger small">${{ "%.2f"|format(bal) }}</span>
+                    {% else %}
+                      <span class="text-success small">$0.00</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if rp.status == "overdue" %}
+                      <span class="badge bg-danger">OVERDUE</span>
+                    {% elif rp.status == "partial" %}
+                      <span class="badge bg-warning text-dark">PARTIAL</span>
+                    {% elif rp.status == "unpaid" %}
+                      <span class="badge bg-secondary">UNPAID</span>
+                    {% else %}
+                      <span class="badge bg-success">PAID</span>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <div class="card-body text-muted">No rent periods generated yet.</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Right column: manual payment + history -->
+      <div class="col-lg-5">
+
+        <!-- Add Manual Payment -->
+        <div class="card shadow-sm mb-4">
+          <div class="card-header"><strong>Record Manual Payment</strong></div>
+          <div class="card-body">
+            <form method="POST" novalidate>
+              {{ payment_form.hidden_tag() }}
+              <div class="mb-2">
+                {{ payment_form.amount.label(class="form-label") }}
+                <div class="input-group">
+                  <span class="input-group-text">$</span>
+                  {{ payment_form.amount(class="form-control" + (" is-invalid" if payment_form.amount.errors else "")) }}
+                </div>
+                {% for e in payment_form.amount.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+              </div>
+              <div class="mb-2">
+                {{ payment_form.payment_date.label(class="form-label") }}
+                {{ payment_form.payment_date(class="form-control", value=today) }}
+              </div>
+              <div class="mb-2">
+                {{ payment_form.reference.label(class="form-label") }}
+                {{ payment_form.reference(class="form-control") }}
+              </div>
+              <div class="mb-2">
+                {{ payment_form.notes.label(class="form-label") }}
+                {{ payment_form.notes(class="form-control", rows=2) }}
+              </div>
+              <button type="submit" class="btn btn-success btn-sm">Record Payment</button>
+            </form>
+          </div>
+        </div>
+
+        <!-- Payment History -->
+        <div class="card shadow-sm">
+          <div class="card-header"><strong>Payment History</strong></div>
+          {% if payments %}
+          <div class="table-responsive">
+            <table class="table table-sm mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Date</th>
+                  <th>Amount</th>
+                  <th>Source</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for p in payments %}
+                <tr>
+                  <td class="small">{{ p.payment_date }}</td>
+                  <td>${{ "%.2f"|format(p.amount) }}</td>
+                  <td><span class="badge bg-light text-dark border">{{ p.source }}</span></td>
+                  <td>
+                    <form method="POST" action="{{ url_for('payments.delete_payment', payment_id=p.id) }}"
+                          onsubmit="return confirm('Delete this payment and reverse allocations?')">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <button class="btn btn-sm btn-link text-danger p-0">Del</button>
+                    </form>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <div class="card-body text-muted small">No payments recorded.</div>
+          {% endif %}
+        </div>
+
+      </div>
+    </div>
+
+    {% if tenant.notes %}
+    <div class="mt-3">
+      <strong>Notes:</strong> <span class="text-muted">{{ tenant.notes }}</span>
+    </div>
+    {% endif %}
+
+    <div class="mt-3">
+      <a href="{{ url_for('dashboard.index') }}" class="text-muted small">
+        <i class="bi bi-arrow-left"></i> Back to Dashboard
+      </a>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

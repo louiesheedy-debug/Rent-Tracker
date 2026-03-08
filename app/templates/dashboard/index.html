@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Rent Tracker{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-11">
+
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h2 class="mb-0">Dashboard</h2>
+      <a href="{{ url_for('tenants.add') }}" class="btn btn-primary">
+        <i class="bi bi-person-plus-fill me-1"></i> Add Tenant
+      </a>
+    </div>
+
+    <!-- Stats bar -->
+    <div class="row g-3 mb-4">
+      <div class="col-sm-4">
+        <div class="card text-center">
+          <div class="card-body py-3">
+            <div class="fs-2 fw-bold text-primary">{{ total_tenants }}</div>
+            <div class="text-muted small">Active Tenants</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-sm-4">
+        <div class="card text-center border-danger">
+          <div class="card-body py-3">
+            <div class="fs-2 fw-bold text-danger">{{ overdue_count }}</div>
+            <div class="text-muted small">Overdue</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-sm-4">
+        <div class="card text-center border-warning">
+          <div class="card-body py-3">
+            <div class="fs-2 fw-bold text-warning">${{ "%.2f"|format(total_outstanding) }}</div>
+            <div class="text-muted small">Total Outstanding</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {% if tenant_data %}
+    <div class="card shadow-sm">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Tenant</th>
+              <th>Property</th>
+              <th>Rent</th>
+              <th>Status</th>
+              <th>Next Due</th>
+              <th>Outstanding</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in tenant_data %}
+            {% set t = row.tenant %}
+            <tr>
+              <td>
+                <div class="fw-semibold">{{ t.full_name }}</div>
+                <div class="text-muted small">{{ t.email }}</div>
+              </td>
+              <td class="text-muted small">
+                {{ t.property.full_address() if t.property else "—" }}
+              </td>
+              <td>
+                ${{ "%.2f"|format(t.weekly_rent) }}/fortnight
+              </td>
+              <td>
+                {% if row.status == "overdue" %}
+                  <span class="badge bg-danger">OVERDUE</span>
+                {% elif row.status == "partial" %}
+                  <span class="badge bg-warning text-dark">PARTIAL</span>
+                {% elif row.status == "unpaid" %}
+                  <span class="badge bg-secondary">UNPAID</span>
+                {% else %}
+                  <span class="badge bg-success">PAID</span>
+                {% endif %}
+              </td>
+              <td class="small">
+                {% if row.next_due %}
+                  {{ row.next_due.strftime("%d %b %Y") }}
+                {% else %}
+                  <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if row.overdue_amount > 0 %}
+                  <span class="text-danger fw-semibold">${{ "%.2f"|format(row.overdue_amount) }}</span>
+                {% else %}
+                  <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+              <td>
+                <a href="{{ url_for('tenants.detail', tenant_id=t.id) }}" class="btn btn-sm btn-outline-primary">
+                  View
+                </a>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% else %}
+    <div class="text-center py-5 text-muted">
+      <i class="bi bi-people fs-1"></i>
+      <p class="mt-2">No active tenants yet. <a href="{{ url_for('tenants.add') }}">Add your first tenant</a>.</p>
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}

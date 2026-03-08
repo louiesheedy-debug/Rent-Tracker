@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block title %}Review Import - Rent Tracker{% endblock %}
+
+{% macro tenant_select(name, tenants, selected_id) %}
+<select name="{{ name }}" class="form-select form-select-sm">
+  <option value="">-- Select Tenant --</option>
+  {% for t in tenants %}
+  <option value="{{ t.id }}" {% if selected_id == t.id %}selected{% endif %}>{{ t.full_name }}</option>
+  {% endfor %}
+</select>
+{% endmacro %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-11">
+
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <div>
+        <h2 class="mb-0">Review Import</h2>
+        <div class="text-muted small">{{ csv_import.filename }} — {{ csv_import.imported_at.strftime('%d/%m/%Y %H:%M') }}</div>
+      </div>
+      <form method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="confirm_all">
+        <button class="btn btn-success" onclick="return confirm('Apply all confirmed matches?')">
+          <i class="bi bi-check2-all me-1"></i> Confirm All &amp; Apply
+        </button>
+      </form>
+    </div>
+
+    <!-- Auto-matched -->
+    {% if auto_matched %}
+    <div class="card shadow-sm mb-4 border-success">
+      <div class="card-header bg-success text-white">
+        <strong><i class="bi bi-check-circle me-1"></i> Auto-Matched ({{ auto_matched|length }})</strong>
+        <span class="float-end small">Score &ge; 70 — will be applied on confirm</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead class="table-light">
+            <tr><th>Date</th><th>Amount</th><th>Reference</th><th>Tenant</th><th>Score</th><th>Change</th></tr>
+          </thead>
+          <tbody>
+            {% for txn in auto_matched %}
+            <tr>
+              <td class="small">{{ txn.parsed_date or txn.raw_date }}</td>
+              <td>${{ "%.2f"|format(txn.parsed_amount) }}</td>
+              <td class="small text-muted">{{ (txn.raw_reference or txn.raw_description)[:60] }}</td>
+              <td>{% if txn.matched_tenant %}<span class="fw-semibold">{{ txn.matched_tenant.full_name }}</span>{% endif %}</td>
+              <td><span class="badge bg-success">{{ txn.match_confidence }}</span></td>
+              <td>
+                <form method="POST" class="d-flex gap-1">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="action" value="update_match">
+                  <input type="hidden" name="txn_id" value="{{ txn.id }}">
+                  {{ tenant_select("tenant_id", tenants, txn.matched_tenant_id) }}
+                  <input type="hidden" name="match_status" value="manual_matched">
+                  <button class="btn btn-sm btn-outline-secondary">Reassign</button>
+                  <button name="match_status" value="ignored" class="btn btn-sm btn-outline-danger">Ignore</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Suggested -->
+    {% if suggested %}
+    <div class="card shadow-sm mb-4 border-warning">
+      <div class="card-header bg-warning text-dark">
+        <strong><i class="bi bi-question-circle me-1"></i> Suggested Matches ({{ suggested|length }})</strong>
+        <span class="float-end small">Score 40–69 — confirm or reassign</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead class="table-light">
+            <tr><th>Date</th><th>Amount</th><th>Reference</th><th>Suggested Tenant</th><th>Score</th><th>Action</th></tr>
+          </thead>
+          <tbody>
+            {% for txn in suggested %}
+            <tr>
+              <td class="small">{{ txn.parsed_date or txn.raw_date }}</td>
+              <td>${{ "%.2f"|format(txn.parsed_amount) }}</td>
+              <td class="small text-muted">{{ (txn.raw_reference or txn.raw_description)[:60] }}</td>
+              <td>{% if txn.matched_tenant %}<span class="text-warning-emphasis">{{ txn.matched_tenant.full_name }}</span>{% endif %}</td>
+              <td><span class="badge bg-warning text-dark">{{ txn.match_confidence }}</span></td>
+              <td>
+                <form method="POST" class="d-flex gap-1">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="action" value="update_match">
+                  <input type="hidden" name="txn_id" value="{{ txn.id }}">
+                  {{ tenant_select("tenant_id", tenants, txn.matched_tenant_id) }}
+                  <button name="match_status" value="auto_matched" class="btn btn-sm btn-success">Confirm</button>
+                  <button name="match_status" value="ignored" class="btn btn-sm btn-outline-danger">Ignore</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Unmatched -->
+    {% if unmatched %}
+    <div class="card shadow-sm mb-4 border-secondary">
+      <div class="card-header">
+        <strong><i class="bi bi-x-circle me-1"></i> Unmatched ({{ unmatched|length }})</strong>
+        <span class="float-end small text-muted">Assign manually or ignore</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead class="table-light">
+            <tr><th>Date</th><th>Amount</th><th>Reference</th><th>Assign To</th><th></th></tr>
+          </thead>
+          <tbody>
+            {% for txn in unmatched %}
+            <tr>
+              <td class="small">{{ txn.parsed_date or txn.raw_date }}</td>
+              <td>${{ "%.2f"|format(txn.parsed_amount) }}</td>
+              <td class="small text-muted">{{ (txn.raw_reference or txn.raw_description)[:60] }}</td>
+              <td colspan="2">
+                <form method="POST" class="d-flex gap-1">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="action" value="update_match">
+                  <input type="hidden" name="txn_id" value="{{ txn.id }}">
+                  {{ tenant_select("tenant_id", tenants, None) }}
+                  <button name="match_status" value="manual_matched" class="btn btn-sm btn-primary">Assign</button>
+                  <button name="match_status" value="ignored" class="btn btn-sm btn-outline-danger">Ignore</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Applied / duplicates / ignored (collapsed) -->
+    {% if applied %}
+    <div class="card shadow-sm mb-3 border-success">
+      <div class="card-header bg-success bg-opacity-10">
+        <strong><i class="bi bi-check2-square me-1"></i> Already Applied ({{ applied|length }})</strong>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if duplicates %}
+    <div class="alert alert-info">
+      <i class="bi bi-info-circle me-1"></i>
+      {{ duplicates|length }} duplicate transaction(s) were skipped (already imported).
+    </div>
+    {% endif %}
+
+    {% if ignored %}
+    <div class="alert alert-secondary">
+      {{ ignored|length }} transaction(s) marked as ignored.
+    </div>
+    {% endif %}
+
+    {% if not auto_matched and not suggested and not unmatched and not applied %}
+    <div class="text-center py-5 text-muted">
+      <i class="bi bi-check2-all fs-1"></i>
+      <p class="mt-2">All transactions have been processed.</p>
+    </div>
+    {% endif %}
+
+    <a href="{{ url_for('payments.upload') }}" class="text-muted small">
+      <i class="bi bi-arrow-left"></i> Back to Imports
+    </a>
+
+  </div>
+</div>
+{% endblock %}

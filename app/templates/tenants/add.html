@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Add Tenant - Rent Tracker{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-7">
+    <h2 class="mb-4">Add Tenant</h2>
+    <div class="card shadow-sm">
+      <div class="card-body p-4">
+        <form method="POST" novalidate>
+          {{ form.hidden_tag() }}
+
+          <h5 class="mb-3 text-primary">Tenant Details</h5>
+          <div class="row g-3 mb-4">
+            <div class="col-md-6">
+              {{ form.full_name.label(class="form-label") }}
+              {{ form.full_name(class="form-control" + (" is-invalid" if form.full_name.errors else "")) }}
+              {% for e in form.full_name.errors %}<div class="invalid-feedback">{{ e }}</div>{% endfor %}
+            </div>
+            <div class="col-md-6">
+              {{ form.email.label(class="form-label") }}
+              {{ form.email(class="form-control" + (" is-invalid" if form.email.errors else "")) }}
+              {% for e in form.email.errors %}<div class="invalid-feedback">{{ e }}</div>{% endfor %}
+            </div>
+            <div class="col-md-6">
+              {{ form.fortnightly_rent.label(class="form-label") }}
+              <div class="input-group">
+                <span class="input-group-text">$</span>
+                {{ form.fortnightly_rent(class="form-control" + (" is-invalid" if form.fortnightly_rent.errors else "")) }}
+              </div>
+              {% for e in form.fortnightly_rent.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+            </div>
+            <div class="col-md-6">
+              {{ form.lease_start_date.label(class="form-label") }}
+              {{ form.lease_start_date(class="form-control" + (" is-invalid" if form.lease_start_date.errors else "")) }}
+              {% for e in form.lease_start_date.errors %}<div class="invalid-feedback">{{ e }}</div>{% endfor %}
+            </div>
+          </div>
+
+          <h5 class="mb-3 text-primary">Property (optional)</h5>
+          <div class="row g-3 mb-4">
+            <div class="col-md-12">
+              {{ form.property_address.label(class="form-label") }}
+              {{ form.property_address(class="form-control") }}
+            </div>
+            <div class="col-md-5">
+              {{ form.property_suburb.label(class="form-label") }}
+              {{ form.property_suburb(class="form-control") }}
+            </div>
+            <div class="col-md-3">
+              {{ form.property_state.label(class="form-label") }}
+              {{ form.property_state(class="form-control") }}
+            </div>
+            <div class="col-md-4">
+              {{ form.property_postcode.label(class="form-label") }}
+              {{ form.property_postcode(class="form-control") }}
+            </div>
+          </div>
+
+          <div class="mb-4">
+            {{ form.notes.label(class="form-label") }}
+            {{ form.notes(class="form-control", rows=3) }}
+          </div>
+
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary">Add Tenant</button>
+            <a href="{{ url_for('dashboard.index') }}" class="btn btn-outline-secondary">Cancel</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

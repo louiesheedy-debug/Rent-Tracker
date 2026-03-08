@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Settings - Rent Tracker{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-6">
+    <h2 class="mb-4">Settings</h2>
+
+    <div class="card shadow-sm">
+      <div class="card-body p-4">
+        <form method="POST" novalidate>
+          {{ form.hidden_tag() }}
+
+          <h5 class="text-primary mb-3">General</h5>
+          <div class="mb-3">
+            {{ form.app_name.label(class="form-label") }}
+            {{ form.app_name(class="form-control" + (" is-invalid" if form.app_name.errors else "")) }}
+            {% for e in form.app_name.errors %}<div class="invalid-feedback">{{ e }}</div>{% endfor %}
+          </div>
+          <div class="mb-4">
+            {{ form.timezone.label(class="form-label") }}
+            {{ form.timezone(class="form-select") }}
+          </div>
+
+          <h5 class="text-primary mb-3">Email Reminders</h5>
+          <div class="mb-3">
+            {{ form.smtp_email.label(class="form-label") }}
+            {{ form.smtp_email(class="form-control" + (" is-invalid" if form.smtp_email.errors else "")) }}
+            <div class="form-text">Your Gmail address used to send reminders.</div>
+            {% for e in form.smtp_email.errors %}<div class="invalid-feedback">{{ e }}</div>{% endfor %}
+          </div>
+          <div class="mb-3">
+            {{ form.smtp_app_password.label(class="form-label") }}
+            {{ form.smtp_app_password(class="form-control") }}
+            <div class="form-text">
+              Generate at <strong>Google Account &gt; Security &gt; App Passwords</strong>.
+              Leave blank to keep existing password.
+            </div>
+          </div>
+          <div class="mb-4">
+            {{ form.reminder_hour.label(class="form-label") }}
+            {{ form.reminder_hour(class="form-control", style="max-width:100px") }}
+            <div class="form-text">Hour of day (0–23) to send daily overdue reminders.</div>
+          </div>
+
+          <h5 class="text-primary mb-3">Send Test Email</h5>
+          <div class="mb-4">
+            {{ form.test_email_address.label(class="form-label") }}
+            {{ form.test_email_address(class="form-control") }}
+            <div class="form-text">Fill in to send a test email when you save settings.</div>
+          </div>
+
+          <button type="submit" class="btn btn-primary">Save Settings</button>
+        </form>
+      </div>
+    </div>
+
+    {% if settings.smtp_email %}
+    <div class="alert alert-info mt-3">
+      <i class="bi bi-envelope-check me-1"></i>
+      Currently configured to send from <strong>{{ settings.smtp_email }}</strong>.
+      Reminders sent daily at <strong>{{ settings.reminder_hour }}:00</strong>.
+    </div>
+    {% else %}
+    <div class="alert alert-warning mt-3">
+      <i class="bi bi-exclamation-triangle me-1"></i>
+      No SMTP credentials configured. Email reminders will not be sent.
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}

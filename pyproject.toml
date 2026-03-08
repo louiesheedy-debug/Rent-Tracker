@@ -1,0 +1,24 @@
+[project]
+name = "rent-tracker"
+version = "0.1.0"
+description = "Rent tracking web app for landlords"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "flask>=3.0.0",
+    "flask-sqlalchemy>=3.1.0",
+    "flask-wtf>=1.2.1",
+    "wtforms>=3.1.1",
+    "python-dateutil>=2.9.0",
+    "apscheduler>=3.10.4",
+    "pytz>=2024.1",
+    "email-validator>=2.1.0",
+    "gunicorn>=21.2.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
