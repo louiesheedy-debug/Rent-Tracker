@@ -163,12 +163,16 @@ def _apply_confirmed_transactions(csv_import, tenants):
     from ..emails.sender import send_payment_received_email
     from ..models import Settings
 
-    txns = BankTransaction.query.filter(
-        BankTransaction.csv_import_id == csv_import.id,
-        BankTransaction.match_status.in_(["auto_matched", "manual_matched"]),
-        BankTransaction.matched_payment_id.is_(None),
-        BankTransaction.matched_tenant_id.isnot(None),
-    ).all()
+    txns = (
+        BankTransaction.query.filter(
+            BankTransaction.csv_import_id == csv_import.id,
+            BankTransaction.match_status.in_(["auto_matched", "manual_matched"]),
+            BankTransaction.matched_payment_id.is_(None),
+            BankTransaction.matched_tenant_id.isnot(None),
+        )
+        .order_by(BankTransaction.parsed_date.asc())
+        .all()
+    )
 
     tenant_map = {t.id: t for t in tenants}
     settings = Settings.query.filter_by(user_id=OWNER_ID).first()

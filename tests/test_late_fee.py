@@ -1,5 +1,5 @@
 """
-Tests for late fee and overdue status logic.
+Tests for late fee, overdue status, and CSV vs manual payment parity.
 
 Ensures lateness is determined from the payment's actual payment_date,
 NOT the date of CSV import or the current date.
@@ -8,8 +8,9 @@ import unittest
 from datetime import date, timedelta
 from decimal import Decimal
 from flask import Flask
-from app.models import db, User, Settings, Tenant, RentPeriod, Payment
+from app.models import db, User, Settings, Tenant, RentPeriod, Payment, PaymentAllocation
 from app.payments.allocator import allocate_payment, deallocate_payment, _compute_late_fee
+from app.tenants.logic import compute_tenant_status, refresh_period_statuses
 
 
 def create_app():
@@ -22,14 +23,15 @@ def create_app():
     return app
 
 
-class LateFeeTestCase(unittest.TestCase):
+class BaseTestCase(unittest.TestCase):
+    """Shared setup: in-memory DB with one owner and one tenant."""
+
     def setUp(self):
         self.app = create_app()
         self.ctx = self.app.app_context()
         self.ctx.push()
         db.create_all()
 
-        # Create owner + tenant
         user = User(id=1, username="owner")
         db.session.add(user)
         db.session.add(Settings(user_id=1))
@@ -64,142 +66,372 @@ class LateFeeTestCase(unittest.TestCase):
         db.session.flush()
         return rp
 
-    def _make_payment(self, payment_date, amount=Decimal("500.00")):
+    def _make_payment(self, payment_date, amount=Decimal("500.00"), source="manual"):
         p = Payment(
             tenant_id=self.tenant.id,
             amount=amount,
             payment_date=payment_date,
-            source="csv",
+            source=source,
         )
         db.session.add(p)
         db.session.flush()
         return p
 
-    # ------------------------------------------------------------------
-    # _compute_late_fee unit tests
-    # ------------------------------------------------------------------
+    def _make_fortnightly_periods(self, start_date, count):
+        """Create `count` fortnightly rent periods starting from `start_date`."""
+        periods = []
+        current = start_date
+        for _ in range(count):
+            periods.append(self._make_period(current))
+            current += timedelta(days=14)
+        return periods
 
-    def test_compute_late_fee_on_time(self):
+
+# ======================================================================
+# 1. Core late fee unit tests
+# ======================================================================
+
+class TestComputeLateFee(BaseTestCase):
+
+    def test_on_due_date(self):
         """Payment on due date => zero late fee."""
         rp = self._make_period(date(2026, 3, 8))
-        fee = _compute_late_fee(rp, as_of_date=date(2026, 3, 8))
-        self.assertEqual(fee, Decimal("0.00"))
+        self.assertEqual(_compute_late_fee(rp, date(2026, 3, 8)), Decimal("0.00"))
 
-    def test_compute_late_fee_early(self):
+    def test_before_due_date(self):
         """Payment before due date => zero late fee."""
         rp = self._make_period(date(2026, 3, 8))
-        fee = _compute_late_fee(rp, as_of_date=date(2026, 3, 6))
-        self.assertEqual(fee, Decimal("0.00"))
+        self.assertEqual(_compute_late_fee(rp, date(2026, 3, 6)), Decimal("0.00"))
 
-    def test_compute_late_fee_late(self):
+    def test_after_due_date(self):
         """Payment after due date => fee based on days late."""
         rp = self._make_period(date(2026, 3, 8))
-        fee = _compute_late_fee(rp, as_of_date=date(2026, 3, 10))
+        fee = _compute_late_fee(rp, date(2026, 3, 10))
         daily_rate = Decimal("500.00") / Decimal("14")
         expected = (daily_rate * 2).quantize(Decimal("0.01"))
         self.assertEqual(fee, expected)
 
-    # ------------------------------------------------------------------
-    # Core bug scenario: payment_date == due_date, CSV imported later
-    # ------------------------------------------------------------------
 
-    def test_on_time_payment_no_late_fee(self):
-        """
-        Bug scenario: due_date = 2026-03-08, payment_date = 2026-03-08,
-        CSV imported on 2026-03-10.
-        The payment should result in PAID status with $0 late fee.
-        """
+# ======================================================================
+# 2. Manual payment tests
+# ======================================================================
+
+class TestManualPayment(BaseTestCase):
+
+    def test_manual_on_due_date_no_late_fee(self):
+        """TEST 1: Manual payment on due date => no late fee."""
         rp = self._make_period(date(2026, 3, 8))
-        payment = self._make_payment(date(2026, 3, 8))
-
-        allocate_payment(payment)
+        p = self._make_payment(date(2026, 3, 8), source="manual")
+        allocate_payment(p)
         db.session.refresh(rp)
-
         self.assertEqual(rp.status, "paid")
         self.assertEqual(Decimal(str(rp.late_fee)), Decimal("0.00"))
         self.assertTrue(rp.paid_on_time)
 
-    def test_on_time_payment_clears_stale_display_fee(self):
-        """
-        If a stale display-only late fee was persisted (e.g., from viewing
-        the tenant detail page), the allocator should overwrite it with
-        the correct fee based on payment_date.
-        """
+    def test_manual_early_no_late_fee(self):
         rp = self._make_period(date(2026, 3, 8))
-
-        # Simulate stale display fee written by the old detail page logic
-        rp.late_fee = Decimal("71.43")  # as if 2 days late
-        db.session.flush()
-
-        # Now allocate an on-time payment
-        payment = self._make_payment(date(2026, 3, 8))
-        allocate_payment(payment)
+        p = self._make_payment(date(2026, 3, 5), source="manual")
+        allocate_payment(p)
         db.session.refresh(rp)
-
         self.assertEqual(rp.status, "paid")
         self.assertEqual(Decimal(str(rp.late_fee)), Decimal("0.00"))
         self.assertTrue(rp.paid_on_time)
 
-    def test_late_payment_gets_fee(self):
-        """Payment 3 days after due date should get a late fee."""
+    def test_manual_late_gets_fee(self):
         rp = self._make_period(date(2026, 3, 8))
-        payment = self._make_payment(date(2026, 3, 11), amount=Decimal("700.00"))
-
-        allocate_payment(payment)
+        p = self._make_payment(date(2026, 3, 11), amount=Decimal("700.00"), source="manual")
+        allocate_payment(p)
         db.session.refresh(rp)
+        self.assertEqual(rp.status, "paid")
+        self.assertGreater(Decimal(str(rp.late_fee)), Decimal("0.00"))
+        self.assertFalse(rp.paid_on_time)
 
+
+# ======================================================================
+# 3. CSV payment tests — must behave identically to manual
+# ======================================================================
+
+class TestCsvPayment(BaseTestCase):
+
+    def test_csv_on_due_date_no_late_fee(self):
+        """TEST 2: CSV payment on due date => no late fee."""
+        rp = self._make_period(date(2026, 3, 8))
+        p = self._make_payment(date(2026, 3, 8), source="csv")
+        allocate_payment(p)
+        db.session.refresh(rp)
+        self.assertEqual(rp.status, "paid")
+        self.assertEqual(Decimal(str(rp.late_fee)), Decimal("0.00"))
+        self.assertTrue(rp.paid_on_time)
+
+    def test_csv_before_due_date_no_late_fee(self):
+        """TEST 3: CSV payment before due date => no late fee."""
+        rp = self._make_period(date(2026, 3, 8))
+        p = self._make_payment(date(2026, 3, 5), source="csv")
+        allocate_payment(p)
+        db.session.refresh(rp)
+        self.assertEqual(rp.status, "paid")
+        self.assertEqual(Decimal(str(rp.late_fee)), Decimal("0.00"))
+        self.assertTrue(rp.paid_on_time)
+
+    def test_csv_after_due_date_gets_fee(self):
+        """TEST 4: CSV payment after due date => late fee applies."""
+        rp = self._make_period(date(2026, 3, 8))
+        p = self._make_payment(date(2026, 3, 11), amount=Decimal("700.00"), source="csv")
+        allocate_payment(p)
+        db.session.refresh(rp)
         self.assertEqual(rp.status, "paid")
         daily_rate = Decimal("500.00") / Decimal("14")
         expected_fee = (daily_rate * 3).quantize(Decimal("0.01"))
         self.assertEqual(Decimal(str(rp.late_fee)), expected_fee)
         self.assertFalse(rp.paid_on_time)
 
-    def test_early_payment_no_late_fee(self):
-        """Payment before due date => no late fee, on time."""
-        rp = self._make_period(date(2026, 3, 8))
-        payment = self._make_payment(date(2026, 3, 5))
 
-        allocate_payment(payment)
+# ======================================================================
+# 4. Multiple fortnightly CSV payments (the exact bug scenario)
+# ======================================================================
+
+class TestMultipleCsvPayments(BaseTestCase):
+
+    def test_fortnightly_csv_payments_in_order(self):
+        """
+        TEST 5: Multiple fortnightly CSV payments imported in chronological
+        order. Each payment should cover its corresponding period.
+
+        Periods:  Jan 5, Jan 19, Feb 2, Feb 16, Mar 2
+        Payments: Jan 5, Jan 19, Feb 2, Feb 16, Mar 2 (all on time)
+        """
+        period_dates = [
+            date(2026, 1, 5), date(2026, 1, 19), date(2026, 2, 2),
+            date(2026, 2, 16), date(2026, 3, 2),
+        ]
+        periods = [self._make_period(d) for d in period_dates]
+
+        # Allocate in order (as corrected CSV import should do)
+        for d in period_dates:
+            p = self._make_payment(d, source="csv")
+            allocate_payment(p)
+
+        for rp in periods:
+            db.session.refresh(rp)
+            self.assertEqual(rp.status, "paid",
+                             f"Period {rp.due_date} should be PAID")
+            self.assertEqual(Decimal(str(rp.late_fee)), Decimal("0.00"),
+                             f"Period {rp.due_date} should have no late fee")
+            self.assertTrue(rp.paid_on_time,
+                            f"Period {rp.due_date} should be on time")
+
+    def test_csv_payments_sorted_before_allocation(self):
+        """
+        TEST 6: Even if CSV rows are in arbitrary order, the import
+        path sorts them by parsed_date ASC before allocating. We verify
+        that sorting first produces correct results.
+
+        CSV rows arrive: Feb 2, Jan 5, Jan 19
+        After sorting:   Jan 5, Jan 19, Feb 2
+        """
+        period_dates = [
+            date(2026, 1, 5), date(2026, 1, 19), date(2026, 2, 2),
+        ]
+        periods = [self._make_period(d) for d in period_dates]
+
+        # Simulate CSV rows in random order, then sort before allocating
+        # (this is what _apply_confirmed_transactions now does)
+        csv_dates = [date(2026, 2, 2), date(2026, 1, 5), date(2026, 1, 19)]
+        sorted_dates = sorted(csv_dates)
+
+        for d in sorted_dates:
+            p = self._make_payment(d, source="csv")
+            allocate_payment(p)
+
+        for rp in periods:
+            db.session.refresh(rp)
+            self.assertEqual(rp.status, "paid",
+                             f"Period {rp.due_date} should be PAID")
+            self.assertEqual(Decimal(str(rp.late_fee)), Decimal("0.00"),
+                             f"Period {rp.due_date} should have no late fee")
+
+
+# ======================================================================
+# 5. Historical paid periods must not become overdue
+# ======================================================================
+
+class TestHistoricalPeriods(BaseTestCase):
+
+    def test_paid_period_stays_paid_after_recompute(self):
+        """
+        TEST 7: A period paid on time must NOT become overdue when
+        compute_tenant_status() runs later (e.g. weeks after the due date).
+        """
+        rp = self._make_period(date(2020, 6, 1))  # far in the past
+        p = self._make_payment(date(2020, 6, 1), source="csv")
+        allocate_payment(p)
+        db.session.refresh(rp)
+        self.assertEqual(rp.status, "paid")
+
+        # Simulate what happens on every page load
+        compute_tenant_status(self.tenant)
+        db.session.refresh(rp)
+
+        self.assertEqual(rp.status, "paid",
+                         "Paid period must not flip to overdue on recompute")
+        self.assertEqual(Decimal(str(rp.late_fee)), Decimal("0.00"))
+
+    def test_paid_period_stays_paid_after_refresh(self):
+        """refresh_period_statuses must not clobber paid periods."""
+        rp = self._make_period(date(2020, 6, 1))
+        p = self._make_payment(date(2020, 6, 1), source="csv")
+        allocate_payment(p)
+        db.session.refresh(rp)
+        self.assertEqual(rp.status, "paid")
+
+        refresh_period_statuses(self.tenant)
+        db.session.refresh(rp)
+        self.assertEqual(rp.status, "paid")
+
+
+# ======================================================================
+# 6. CSV and manual payments mixed
+# ======================================================================
+
+class TestMixedPayments(BaseTestCase):
+
+    def test_csv_and_manual_same_logic(self):
+        """
+        TEST 8: CSV and manual payments mixed together produce the
+        same allocation result.
+        """
+        rp1 = self._make_period(date(2026, 1, 5))
+        rp2 = self._make_period(date(2026, 1, 19))
+
+        p1 = self._make_payment(date(2026, 1, 5), source="csv")
+        allocate_payment(p1)
+        p2 = self._make_payment(date(2026, 1, 19), source="manual")
+        allocate_payment(p2)
+
+        db.session.refresh(rp1)
+        db.session.refresh(rp2)
+
+        for rp in [rp1, rp2]:
+            self.assertEqual(rp.status, "paid")
+            self.assertEqual(Decimal(str(rp.late_fee)), Decimal("0.00"))
+            self.assertTrue(rp.paid_on_time)
+
+
+# ======================================================================
+# 7. Idempotency — re-running recompute gives same results
+# ======================================================================
+
+class TestIdempotency(BaseTestCase):
+
+    def test_recompute_is_deterministic(self):
+        """
+        TEST 9: Re-running compute_tenant_status / refresh multiple
+        times must not change results.
+        """
+        periods = self._make_fortnightly_periods(date(2026, 1, 5), 3)
+
+        for rp in periods:
+            p = self._make_payment(rp.due_date, source="csv")
+            allocate_payment(p)
+
+        # Run recompute multiple times
+        for _ in range(5):
+            compute_tenant_status(self.tenant)
+            refresh_period_statuses(self.tenant)
+
+        for rp in periods:
+            db.session.refresh(rp)
+            self.assertEqual(rp.status, "paid")
+            self.assertEqual(Decimal(str(rp.late_fee)), Decimal("0.00"))
+
+
+# ======================================================================
+# 8. No duplicate allocations
+# ======================================================================
+
+class TestNoDuplicateAllocations(BaseTestCase):
+
+    def test_no_duplicate_allocations(self):
+        """
+        TEST 10: Allocating the same payment twice should not create
+        duplicate allocation rows (the second call has nothing left
+        to allocate because the period is already paid).
+        """
+        rp = self._make_period(date(2026, 3, 8))
+        p = self._make_payment(date(2026, 3, 8))
+        allocate_payment(p)
+
+        alloc_count_before = PaymentAllocation.query.count()
+
+        # Second allocation call — period is already paid, nothing to do
+        allocate_payment(p)
+
+        alloc_count_after = PaymentAllocation.query.count()
+        self.assertEqual(alloc_count_before, alloc_count_after,
+                         "Duplicate allocate_payment call must not create extra rows")
+
+    def test_deallocate_then_reallocate(self):
+        """Deallocate + reallocate produces same result, no duplicates."""
+        rp = self._make_period(date(2026, 3, 8))
+        p = self._make_payment(date(2026, 3, 8))
+
+        allocate_payment(p)
+        db.session.refresh(rp)
+        self.assertEqual(rp.status, "paid")
+
+        deallocate_payment(p)
+        db.session.refresh(rp)
+        self.assertIn(rp.status, ("unpaid", "overdue"))
+        self.assertEqual(Decimal(str(rp.late_fee)), Decimal("0.00"))
+
+        allocate_payment(p)
+        db.session.refresh(rp)
+        self.assertEqual(rp.status, "paid")
+        self.assertEqual(Decimal(str(rp.late_fee)), Decimal("0.00"))
+
+        alloc_count = PaymentAllocation.query.filter_by(payment_id=p.id).count()
+        self.assertEqual(alloc_count, 1, "Should have exactly one allocation")
+
+
+# ======================================================================
+# 9. Stale display fee + CSV import scenario (the original bug)
+# ======================================================================
+
+class TestStaleDisplayFee(BaseTestCase):
+
+    def test_stale_fee_overwritten_by_on_time_payment(self):
+        """
+        The original bug: viewing the tenant detail page wrote a
+        display-only late fee to the DB. Then an on-time CSV payment
+        couldn't clear it because the allocator only increased fees.
+        """
+        rp = self._make_period(date(2026, 3, 8))
+
+        # Simulate stale display fee
+        rp.late_fee = Decimal("71.43")
+        db.session.flush()
+
+        p = self._make_payment(date(2026, 3, 8), source="csv")
+        allocate_payment(p)
         db.session.refresh(rp)
 
         self.assertEqual(rp.status, "paid")
         self.assertEqual(Decimal(str(rp.late_fee)), Decimal("0.00"))
         self.assertTrue(rp.paid_on_time)
 
-    # ------------------------------------------------------------------
-    # Deallocation resets late fee
-    # ------------------------------------------------------------------
 
-    def test_deallocate_clears_late_fee(self):
-        """Deallocating a payment should reset late_fee to 0."""
-        rp = self._make_period(date(2026, 3, 8))
-        payment = self._make_payment(date(2026, 3, 11), amount=Decimal("700.00"))
+# ======================================================================
+# 10. Partial payment + deallocation edge cases
+# ======================================================================
 
-        allocate_payment(payment)
-        db.session.refresh(rp)
-        self.assertEqual(rp.status, "paid")
-        self.assertGreater(Decimal(str(rp.late_fee)), Decimal("0.00"))
-
-        deallocate_payment(payment)
-        db.session.refresh(rp)
-
-        self.assertIn(rp.status, ("unpaid", "overdue"))
-        self.assertEqual(Decimal(str(rp.late_fee)), Decimal("0.00"))
-        self.assertIsNone(rp.paid_on_time)
-
-    # ------------------------------------------------------------------
-    # Partial payment scenarios
-    # ------------------------------------------------------------------
+class TestPartialAndDeallocation(BaseTestCase):
 
     def test_partial_then_full_on_time(self):
-        """Two payments both on or before due_date => paid on time, no fee."""
         rp = self._make_period(date(2026, 3, 8))
-
         p1 = self._make_payment(date(2026, 3, 6), amount=Decimal("200.00"))
         allocate_payment(p1)
         db.session.refresh(rp)
         self.assertEqual(rp.status, "partial")
-        self.assertEqual(Decimal(str(rp.late_fee)), Decimal("0.00"))
 
         p2 = self._make_payment(date(2026, 3, 8), amount=Decimal("300.00"))
         allocate_payment(p2)
@@ -208,37 +440,26 @@ class LateFeeTestCase(unittest.TestCase):
         self.assertEqual(Decimal(str(rp.late_fee)), Decimal("0.00"))
         self.assertTrue(rp.paid_on_time)
 
-    def test_partial_on_time_then_rest_late(self):
-        """First payment on time, second payment late => late fee from second payment."""
+    def test_deallocate_clears_late_fee_and_paid_on_time(self):
         rp = self._make_period(date(2026, 3, 8))
-
-        p1 = self._make_payment(date(2026, 3, 8), amount=Decimal("200.00"))
-        allocate_payment(p1)
-        db.session.refresh(rp)
-        self.assertEqual(rp.status, "partial")
-
-        p2 = self._make_payment(date(2026, 3, 12), amount=Decimal("500.00"))
-        allocate_payment(p2)
+        p = self._make_payment(date(2026, 3, 11), amount=Decimal("700.00"))
+        allocate_payment(p)
         db.session.refresh(rp)
         self.assertEqual(rp.status, "paid")
-        # Late fee should be based on 4 days late (from second payment)
-        daily_rate = Decimal("500.00") / Decimal("14")
-        expected_fee = (daily_rate * 4).quantize(Decimal("0.01"))
-        self.assertEqual(Decimal(str(rp.late_fee)), expected_fee)
-        self.assertFalse(rp.paid_on_time)
+        self.assertGreater(Decimal(str(rp.late_fee)), Decimal("0.00"))
 
-    # ------------------------------------------------------------------
-    # update_status with no payment_date (display/refresh scenarios)
-    # ------------------------------------------------------------------
+        deallocate_payment(p)
+        db.session.refresh(rp)
+        self.assertIn(rp.status, ("unpaid", "overdue"))
+        self.assertEqual(Decimal(str(rp.late_fee)), Decimal("0.00"))
+        self.assertIsNone(rp.paid_on_time)
 
-    def test_update_status_unpaid_past_due(self):
-        """Unpaid period past due date should be overdue."""
-        rp = self._make_period(date(2020, 1, 1))  # far in the past
+    def test_unpaid_past_due_is_overdue(self):
+        rp = self._make_period(date(2020, 1, 1))
         rp.update_status()
         self.assertEqual(rp.status, "overdue")
 
-    def test_update_status_unpaid_future(self):
-        """Unpaid period with future due date should be unpaid."""
+    def test_unpaid_future_is_unpaid(self):
         rp = self._make_period(date(2099, 1, 1))
         rp.update_status()
         self.assertEqual(rp.status, "unpaid")

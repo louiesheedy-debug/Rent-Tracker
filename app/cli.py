@@ -38,6 +38,7 @@ def register_commands(app):
                 for rp in tenant.rent_periods:
                     rp.amount_paid = Decimal("0.00")
                     rp.late_fee = Decimal("0.00")
+                    rp.paid_on_time = None
                     rp.update_status()
                 PaymentAllocation.query.filter(
                     PaymentAllocation.rent_period_id.in_(

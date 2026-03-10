@@ -61,13 +61,22 @@ def extend_rent_periods(tenant, months_ahead=6):
 
 
 def compute_tenant_status(tenant):
-    """Return worst status across all rent periods up to and including today."""
+    """Return worst status across all rent periods up to and including today.
+
+    Only recompute status for periods that are NOT fully paid.
+    Paid periods already have their status locked in by the allocator
+    (with the correct payment_date context) and must not be re-evaluated
+    against today's date.
+    """
     today = date.today()
     statuses = []
     for rp in tenant.rent_periods:
         if rp.period_start > today:
             continue
-        rp.update_status()
+        # Only recompute for non-paid periods (unpaid/partial/overdue).
+        # Paid periods must keep their allocator-set status.
+        if rp.status != "paid":
+            rp.update_status()
         statuses.append(rp.status)
 
     order = ["overdue", "partial", "unpaid", "paid"]
@@ -78,7 +87,12 @@ def compute_tenant_status(tenant):
 
 
 def refresh_period_statuses(tenant):
-    """Recompute status for all periods of a tenant."""
+    """Recompute status for non-paid periods of a tenant.
+
+    Paid periods keep their allocator-set status (which was computed
+    with the correct payment_date context).
+    """
     for rp in tenant.rent_periods:
-        rp.update_status()
+        if rp.status != "paid":
+            rp.update_status()
     db.session.commit()
