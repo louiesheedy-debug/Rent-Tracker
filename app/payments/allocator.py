@@ -6,15 +6,17 @@ from decimal import Decimal
 from ..models import db, RentPeriod, PaymentAllocation
 
 
-def _compute_late_fee(period):
+def _compute_late_fee(period, as_of_date=None):
     """
     Calculate the late fee for an overdue period based on days past the due date.
     Daily rate = fortnightly_rent / 14, charged per day overdue.
+    as_of_date defaults to today (for display), but should be set to the
+    payment date when allocating payments.
     """
-    today = date.today()
-    if today <= period.due_date:
+    ref_date = as_of_date or date.today()
+    if ref_date <= period.due_date:
         return Decimal("0.00")
-    days_late = (today - period.due_date).days
+    days_late = (ref_date - period.due_date).days
     daily_rate = Decimal(str(period.tenant.weekly_rent)) / Decimal("14")
     return (daily_rate * days_late).quantize(Decimal("0.01"))
 
@@ -42,8 +44,13 @@ def allocate_payment(payment):
     for period in periods:
         if remaining <= 0:
             break
-        # Lock in the late fee at the time this payment is processed
-        period.late_fee = _compute_late_fee(period)
+        # Lock in the late fee based on how late the payment actually is
+        computed_fee = _compute_late_fee(period, payment.payment_date)
+        # Only update if no prior payment has already locked in a fee,
+        # or if this payment's fee is higher (partial payment scenario)
+        current_fee = Decimal(str(period.late_fee or 0))
+        if computed_fee > current_fee:
+            period.late_fee = computed_fee
         balance = period.balance()
         if balance <= 0:
             continue

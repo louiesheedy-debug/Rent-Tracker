@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-A minimal Python 3.12 project managed with `pyproject.toml`. Entry point is `main.py`.
+A personal-use rent tracking application for managing tenants and monitoring rent payments. The app allows uploading CSV bank statements to automatically match incoming payments to tenants, then sends email reminders notifying tenants whether they are up to date or behind on rent.
+
+Built with Python 3.12, managed with `pyproject.toml`. Entry point is `main.py`.
 
 ## Commands
 
