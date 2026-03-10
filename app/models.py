@@ -91,6 +91,7 @@ class RentPeriod(db.Model):
     amount_paid = db.Column(db.Numeric(10, 2), default=Decimal("0.00"))
     late_fee = db.Column(db.Numeric(10, 2), default=Decimal("0.00"), server_default="0", nullable=False)
     status = db.Column(db.String(16), default="unpaid")  # unpaid/partial/paid/overdue
+    paid_on_time = db.Column(db.Boolean, nullable=True)  # None=not fully paid, True=on time, False=late
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     tenant = db.relationship("Tenant", back_populates="rent_periods")
@@ -99,11 +100,14 @@ class RentPeriod(db.Model):
     def balance(self):
         return Decimal(str(self.amount_due)) + Decimal(str(self.late_fee or 0)) - Decimal(str(self.amount_paid))
 
-    def update_status(self):
+    def update_status(self, payment_date=None):
         balance = self.balance()
         if balance <= 0:
             self.status = "paid"
+            if payment_date is not None:
+                self.paid_on_time = (payment_date <= self.due_date)
         elif Decimal(str(self.amount_paid)) == 0:
+            self.paid_on_time = None
             if self.due_date < date.today():
                 self.status = "overdue"
             else:

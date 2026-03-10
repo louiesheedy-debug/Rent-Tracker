@@ -54,6 +54,13 @@ def _migrate_db():
             conn.commit()
         except Exception:
             pass  # Column already exists
+        try:
+            conn.execute(db.text(
+                "ALTER TABLE rent_periods ADD COLUMN paid_on_time BOOLEAN"
+            ))
+            conn.commit()
+        except Exception:
+            pass  # Column already exists
 
 
 def _seed_owner():

@@ -62,7 +62,7 @@ def allocate_payment(payment):
         )
         db.session.add(alloc)
         period.amount_paid = Decimal(str(period.amount_paid)) + allocated
-        period.update_status()
+        period.update_status(payment_date=payment.payment_date)
         remaining -= allocated
 
     # If there's still remaining (overpayment), apply to next unpaid period
@@ -84,7 +84,7 @@ def allocate_payment(payment):
             )
             db.session.add(alloc)
             next_period.amount_paid = Decimal(str(next_period.amount_paid)) + remaining
-            next_period.update_status()
+            next_period.update_status(payment_date=payment.payment_date)
 
     db.session.commit()
 

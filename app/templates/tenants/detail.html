@@ -84,6 +84,10 @@
                       <span class="badge bg-warning text-dark">PARTIAL</span>
                     {% elif rp.status == "unpaid" %}
                       <span class="badge bg-secondary">UNPAID</span>
+                    {% elif rp.paid_on_time == true %}
+                      <span class="badge bg-success">ON TIME</span>
+                    {% elif rp.paid_on_time == false %}
+                      <span class="badge bg-warning text-dark">PAID LATE</span>
                     {% else %}
                       <span class="badge bg-success">PAID</span>
                     {% endif %}
