@@ -44,12 +44,15 @@ def allocate_payment(payment):
     for period in periods:
         if remaining <= 0:
             break
-        # Lock in the late fee based on how late the payment actually is
+        # Lock in the late fee based on the actual payment date.
         computed_fee = _compute_late_fee(period, payment.payment_date)
-        # Only update if no prior payment has already locked in a fee,
-        # or if this payment's fee is higher (partial payment scenario)
         current_fee = Decimal(str(period.late_fee or 0))
-        if computed_fee > current_fee:
+        if Decimal(str(period.amount_paid)) == 0:
+            # First payment against this period: always use the real fee
+            # (replaces any stale display-only fee that may have been persisted)
+            period.late_fee = computed_fee
+        elif computed_fee > current_fee:
+            # Subsequent partial payment: only increase (later payment = more days late)
             period.late_fee = computed_fee
         balance = period.balance()
         if balance <= 0:
@@ -94,6 +97,9 @@ def deallocate_payment(payment):
     for alloc in payment.allocations:
         rp = alloc.rent_period
         rp.amount_paid = max(Decimal("0.00"), Decimal(str(rp.amount_paid)) - Decimal(str(alloc.amount_allocated)))
+        # If no payments remain against this period, clear the locked-in late fee
+        if Decimal(str(rp.amount_paid)) == 0:
+            rp.late_fee = Decimal("0.00")
         rp.update_status()
         db.session.delete(alloc)
     db.session.commit()

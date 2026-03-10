@@ -106,13 +106,12 @@ def detail(tenant_id):
         .limit(5)
         .all()
     )
-    # Update late fees for display on unpaid/overdue periods (not yet locked by a payment)
+    # Compute display-only late fees for unpaid/overdue periods (not persisted to DB)
     from ..payments.allocator import _compute_late_fee
+    display_late_fees = {}
     for rp in rent_periods:
         if rp.status in ("unpaid", "overdue") and Decimal(str(rp.amount_paid)) == 0:
-            rp.late_fee = _compute_late_fee(rp)
-            rp.update_status()
-    db.session.commit()
+            display_late_fees[rp.id] = _compute_late_fee(rp)
     payments = (
         Payment.query.filter_by(tenant_id=tenant.id)
         .order_by(Payment.payment_date.desc())
@@ -126,6 +125,7 @@ def detail(tenant_id):
         payments=payments,
         payment_form=payment_form,
         today=date.today(),
+        display_late_fees=display_late_fees,
     )
 
 

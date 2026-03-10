@@ -62,8 +62,9 @@
                   <td class="small">{{ rp.due_date }}</td>
                   <td>${{ "%.2f"|format(rp.amount_due) }}</td>
                   <td>
-                    {% if rp.late_fee and rp.late_fee > 0 %}
-                      <span class="text-danger small">${{ "%.2f"|format(rp.late_fee) }}</span>
+                    {% set effective_fee = display_late_fees.get(rp.id, rp.late_fee) if display_late_fees is defined else rp.late_fee %}
+                    {% if effective_fee and effective_fee > 0 %}
+                      <span class="text-danger small">${{ "%.2f"|format(effective_fee) }}</span>
                     {% else %}
                       <span class="text-muted small">—</span>
                     {% endif %}
