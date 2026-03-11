@@ -20,6 +20,43 @@ def register_commands(app):
             else:
                 click.echo("Database already initialized.")
 
+    @app.cli.command("migrate-db")
+    def migrate_db():
+        """Add new columns for separate rent/late-fee tracking (safe to run multiple times)."""
+        with app.app_context():
+            conn = db.engine.raw_connection()
+            cursor = conn.cursor()
+
+            # rent_periods columns
+            cursor.execute("PRAGMA table_info(rent_periods)")
+            rp_cols = {row[1] for row in cursor.fetchall()}
+            for col, ddl in [
+                ("late_fee_paid", "NUMERIC(10,2) NOT NULL DEFAULT 0"),
+                ("late_fee_status", "VARCHAR(16) NOT NULL DEFAULT 'none'"),
+            ]:
+                if col not in rp_cols:
+                    cursor.execute(f"ALTER TABLE rent_periods ADD COLUMN {col} {ddl}")
+                    click.echo(f"Added rent_periods.{col}")
+                else:
+                    click.echo(f"rent_periods.{col} already exists")
+
+            # payment_allocations columns
+            cursor.execute("PRAGMA table_info(payment_allocations)")
+            pa_cols = {row[1] for row in cursor.fetchall()}
+            for col, ddl in [
+                ("rent_allocated", "NUMERIC(10,2) NOT NULL DEFAULT 0"),
+                ("late_fee_allocated", "NUMERIC(10,2) NOT NULL DEFAULT 0"),
+            ]:
+                if col not in pa_cols:
+                    cursor.execute(f"ALTER TABLE payment_allocations ADD COLUMN {col} {ddl}")
+                    click.echo(f"Added payment_allocations.{col}")
+                else:
+                    click.echo(f"payment_allocations.{col} already exists")
+
+            conn.commit()
+            conn.close()
+            click.echo("Migration complete. Run 'flask reallocate-payments' to recompute allocations.")
+
     @app.cli.command("reallocate-payments")
     @click.option("--tenant-id", type=int, default=None, help="Tenant ID (omit for all tenants)")
     def reallocate_payments(tenant_id):
@@ -38,7 +75,9 @@ def register_commands(app):
                 for rp in tenant.rent_periods:
                     rp.amount_paid = Decimal("0.00")
                     rp.late_fee = Decimal("0.00")
+                    rp.late_fee_paid = Decimal("0.00")
                     rp.paid_on_time = None
+                    rp.late_fee_status = "none"
                     rp.update_status()
                 PaymentAllocation.query.filter(
                     PaymentAllocation.rent_period_id.in_(

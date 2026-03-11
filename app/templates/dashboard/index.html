@@ -93,6 +93,9 @@
                 {% else %}
                   <span class="text-muted">—</span>
                 {% endif %}
+                {% if row.late_fees_outstanding > 0 %}
+                  <br><span class="text-warning small">+ ${{ "%.2f"|format(row.late_fees_outstanding) }} fees</span>
+                {% endif %}
               </td>
               <td>
                 <a href="{{ url_for('tenants.detail', tenant_id=t.id) }}" class="btn btn-sm btn-outline-primary">

@@ -51,7 +51,8 @@
                   <th>Rent</th>
                   <th>Late Fee</th>
                   <th>Paid</th>
-                  <th>Balance</th>
+                  <th>Rent Bal</th>
+                  <th>Fee Bal</th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -71,11 +72,19 @@
                   </td>
                   <td>${{ "%.2f"|format(rp.amount_paid) }}</td>
                   <td>
-                    {% set bal = rp.balance() %}
-                    {% if bal > 0 %}
-                      <span class="text-danger small">${{ "%.2f"|format(bal) }}</span>
+                    {% set rent_bal = rp.rent_balance() %}
+                    {% if rent_bal > 0 %}
+                      <span class="text-danger small">${{ "%.2f"|format(rent_bal) }}</span>
                     {% else %}
                       <span class="text-success small">$0.00</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% set fee_bal = rp.late_fee_balance() %}
+                    {% if fee_bal > 0 %}
+                      <span class="text-danger small">${{ "%.2f"|format(fee_bal) }}</span>
+                    {% else %}
+                      <span class="text-muted small">—</span>
                     {% endif %}
                   </td>
                   <td>
@@ -91,6 +100,11 @@
                       <span class="badge bg-warning text-dark">PAID LATE</span>
                     {% else %}
                       <span class="badge bg-success">PAID</span>
+                    {% endif %}
+                    {% if rp.late_fee_status == "outstanding" %}
+                      <span class="badge bg-warning text-dark">FEE DUE</span>
+                    {% elif rp.late_fee_status == "paid" %}
+                      <span class="badge bg-info text-dark">FEE PAID</span>
                     {% endif %}
                   </td>
                 </tr>

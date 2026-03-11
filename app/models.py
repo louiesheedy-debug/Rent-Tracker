@@ -90,19 +90,31 @@ class RentPeriod(db.Model):
     amount_due = db.Column(db.Numeric(10, 2), nullable=False)
     amount_paid = db.Column(db.Numeric(10, 2), default=Decimal("0.00"))
     late_fee = db.Column(db.Numeric(10, 2), default=Decimal("0.00"), server_default="0", nullable=False)
+    late_fee_paid = db.Column(db.Numeric(10, 2), default=Decimal("0.00"), server_default="0", nullable=False)
     status = db.Column(db.String(16), default="unpaid")  # unpaid/partial/paid/overdue
+    late_fee_status = db.Column(db.String(16), default="none")  # none/outstanding/paid
     paid_on_time = db.Column(db.Boolean, nullable=True)  # None=not fully paid, True=on time, False=late
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     tenant = db.relationship("Tenant", back_populates="rent_periods")
     allocations = db.relationship("PaymentAllocation", back_populates="rent_period")
 
+    def rent_balance(self):
+        """Outstanding rent only (excludes late fees)."""
+        return Decimal(str(self.amount_due)) - Decimal(str(self.amount_paid))
+
+    def late_fee_balance(self):
+        """Outstanding late fee only."""
+        return Decimal(str(self.late_fee or 0)) - Decimal(str(self.late_fee_paid or 0))
+
     def balance(self):
-        return Decimal(str(self.amount_due)) + Decimal(str(self.late_fee or 0)) - Decimal(str(self.amount_paid))
+        """Total outstanding (rent + late fee)."""
+        return self.rent_balance() + self.late_fee_balance()
 
     def update_status(self, payment_date=None):
-        balance = self.balance()
-        if balance <= 0:
+        # Rent status based solely on whether base rent is paid
+        rent_bal = self.rent_balance()
+        if rent_bal <= 0:
             self.status = "paid"
             if payment_date is not None:
                 self.paid_on_time = (payment_date <= self.due_date)
@@ -114,6 +126,15 @@ class RentPeriod(db.Model):
                 self.status = "unpaid"
         else:
             self.status = "partial"
+
+        # Late fee status tracked independently
+        fee = Decimal(str(self.late_fee or 0))
+        if fee <= 0:
+            self.late_fee_status = "none"
+        elif self.late_fee_balance() <= 0:
+            self.late_fee_status = "paid"
+        else:
+            self.late_fee_status = "outstanding"
 
 
 class Payment(db.Model):
@@ -139,6 +160,8 @@ class PaymentAllocation(db.Model):
     payment_id = db.Column(db.Integer, db.ForeignKey("payments.id"), nullable=False)
     rent_period_id = db.Column(db.Integer, db.ForeignKey("rent_periods.id"), nullable=False)
     amount_allocated = db.Column(db.Numeric(10, 2), nullable=False)
+    rent_allocated = db.Column(db.Numeric(10, 2), default=Decimal("0.00"), server_default="0", nullable=False)
+    late_fee_allocated = db.Column(db.Numeric(10, 2), default=Decimal("0.00"), server_default="0", nullable=False)
 
     payment = db.relationship("Payment", back_populates="allocations")
     rent_period = db.relationship("RentPeriod", back_populates="allocations")

@@ -86,7 +86,7 @@ def detail(tenant_id):
         settings = Settings.query.filter_by(user_id=OWNER_ID).first()
         if settings:
             overdue_remaining = sum(
-                rp.balance() for rp in
+                rp.rent_balance() for rp in
                 RentPeriod.query.filter(
                     RentPeriod.tenant_id == tenant.id,
                     RentPeriod.status.in_(["overdue", "partial"])

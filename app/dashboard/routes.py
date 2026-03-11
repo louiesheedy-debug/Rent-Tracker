@@ -85,9 +85,12 @@ def index():
     for tenant in tenants:
         status = compute_tenant_status(tenant)
         overdue_amount = Decimal("0.00")
+        late_fees_outstanding = Decimal("0.00")
         for rp in tenant.rent_periods:
             if rp.status in ("overdue", "partial"):
-                overdue_amount += rp.balance()
+                overdue_amount += rp.rent_balance()
+            if rp.late_fee_status == "outstanding":
+                late_fees_outstanding += rp.late_fee_balance()
         next_due = next(
             (rp.due_date for rp in sorted(tenant.rent_periods, key=lambda r: r.due_date)
              if rp.status != "paid"),
@@ -97,6 +100,7 @@ def index():
             "tenant": tenant,
             "status": status,
             "overdue_amount": overdue_amount,
+            "late_fees_outstanding": late_fees_outstanding,
             "next_due": next_due,
         })
 

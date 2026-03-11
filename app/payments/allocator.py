@@ -1,8 +1,16 @@
 """
 Allocate a payment to rent periods (oldest unpaid first — arrears balance model).
+
+Two-pass allocation:
+  Pass 1: Pay base rent across all periods (oldest first)
+  Pass 2: Pay late fees across all periods (oldest first)
+
+This ensures rent always takes priority over late fees, so a tenant who
+pays their full rent is never marked overdue just because of a late fee.
 """
 from datetime import date
 from decimal import Decimal
+from sqlalchemy import or_
 from ..models import db, RentPeriod, PaymentAllocation
 
 
@@ -24,49 +32,88 @@ def _compute_late_fee(period, as_of_date=None):
 def allocate_payment(payment):
     """
     Distribute payment.amount across the tenant's unpaid/partial rent periods
-    oldest-first. Creates PaymentAllocation rows and updates RentPeriod.amount_paid
-    and status. Late fees are computed and locked in at the time of payment.
+    oldest-first.
+
+    Two-pass allocation:
+      Pass 1: Base rent (oldest first)
+      Pass 2: Late fees (oldest first)
+
+    Late fees are computed and locked in at the time of the first payment
+    against a period.
     """
     tenant_id = payment.tenant_id
     remaining = Decimal(str(payment.amount))
 
-    # Get all unpaid/partial periods ordered by due_date ASC (oldest first)
+    # Get all periods that need payment: unpaid/partial/overdue rent OR outstanding late fees
     periods = (
         RentPeriod.query
         .filter(
             RentPeriod.tenant_id == tenant_id,
-            RentPeriod.status.in_(["unpaid", "partial", "overdue"]),
+            or_(
+                RentPeriod.status.in_(["unpaid", "partial", "overdue"]),
+                RentPeriod.late_fee_status == "outstanding",
+            ),
         )
         .order_by(RentPeriod.due_date.asc())
         .all()
     )
 
+    # Track allocations per period: {period_id: {"rent": Decimal, "fee": Decimal}}
+    alloc_map = {}
+
+    # Lock in late fees for periods with unpaid rent
+    for period in periods:
+        if period.status in ("unpaid", "partial", "overdue"):
+            computed_fee = _compute_late_fee(period, payment.payment_date)
+            current_fee = Decimal(str(period.late_fee or 0))
+            if Decimal(str(period.amount_paid)) == 0 and Decimal(str(period.late_fee_paid or 0)) == 0:
+                # First payment against this period: always use the real fee
+                # (replaces any stale display-only fee that may have been persisted)
+                period.late_fee = computed_fee
+            elif computed_fee > current_fee:
+                # Subsequent partial payment: only increase (later payment = more days late)
+                period.late_fee = computed_fee
+
+    # Pass 1: Allocate to base rent (oldest first)
     for period in periods:
         if remaining <= 0:
             break
-        # Lock in the late fee based on the actual payment date.
-        computed_fee = _compute_late_fee(period, payment.payment_date)
-        current_fee = Decimal(str(period.late_fee or 0))
-        if Decimal(str(period.amount_paid)) == 0:
-            # First payment against this period: always use the real fee
-            # (replaces any stale display-only fee that may have been persisted)
-            period.late_fee = computed_fee
-        elif computed_fee > current_fee:
-            # Subsequent partial payment: only increase (later payment = more days late)
-            period.late_fee = computed_fee
-        balance = period.balance()
-        if balance <= 0:
+        rent_owed = period.rent_balance()
+        if rent_owed <= 0:
             continue
-        allocated = min(remaining, balance)
-        alloc = PaymentAllocation(
-            payment_id=payment.id,
-            rent_period_id=period.id,
-            amount_allocated=allocated,
-        )
-        db.session.add(alloc)
-        period.amount_paid = Decimal(str(period.amount_paid)) + allocated
-        period.update_status(payment_date=payment.payment_date)
-        remaining -= allocated
+        rent_alloc = min(remaining, rent_owed)
+        period.amount_paid = Decimal(str(period.amount_paid)) + rent_alloc
+        remaining -= rent_alloc
+        alloc_map[period.id] = {"rent": rent_alloc, "fee": Decimal("0.00"), "period": period}
+
+    # Pass 2: Allocate to late fees (oldest first)
+    for period in periods:
+        if remaining <= 0:
+            break
+        fee_owed = period.late_fee_balance()
+        if fee_owed <= 0:
+            continue
+        fee_alloc = min(remaining, fee_owed)
+        period.late_fee_paid = Decimal(str(period.late_fee_paid or 0)) + fee_alloc
+        remaining -= fee_alloc
+        if period.id in alloc_map:
+            alloc_map[period.id]["fee"] = fee_alloc
+        else:
+            alloc_map[period.id] = {"rent": Decimal("0.00"), "fee": fee_alloc, "period": period}
+
+    # Create PaymentAllocation rows and update statuses
+    for pid, info in alloc_map.items():
+        total = info["rent"] + info["fee"]
+        if total > 0:
+            alloc = PaymentAllocation(
+                payment_id=payment.id,
+                rent_period_id=pid,
+                amount_allocated=total,
+                rent_allocated=info["rent"],
+                late_fee_allocated=info["fee"],
+            )
+            db.session.add(alloc)
+        info["period"].update_status(payment_date=payment.payment_date)
 
     # If there's still remaining (overpayment), apply to next unpaid period
     if remaining > 0:
@@ -75,19 +122,26 @@ def allocate_payment(payment):
             .filter(
                 RentPeriod.tenant_id == tenant_id,
                 RentPeriod.status == "unpaid",
+                ~RentPeriod.id.in_(list(alloc_map.keys())) if alloc_map else True,
             )
             .order_by(RentPeriod.due_date.asc())
             .first()
         )
         if next_period:
-            alloc = PaymentAllocation(
-                payment_id=payment.id,
-                rent_period_id=next_period.id,
-                amount_allocated=remaining,
-            )
-            db.session.add(alloc)
-            next_period.amount_paid = Decimal(str(next_period.amount_paid)) + remaining
-            next_period.update_status(payment_date=payment.payment_date)
+            rent_owed = next_period.rent_balance()
+            rent_alloc = min(remaining, rent_owed) if rent_owed > 0 else Decimal("0.00")
+            if rent_alloc > 0:
+                next_period.amount_paid = Decimal(str(next_period.amount_paid)) + rent_alloc
+                remaining -= rent_alloc
+                alloc = PaymentAllocation(
+                    payment_id=payment.id,
+                    rent_period_id=next_period.id,
+                    amount_allocated=rent_alloc,
+                    rent_allocated=rent_alloc,
+                    late_fee_allocated=Decimal("0.00"),
+                )
+                db.session.add(alloc)
+                next_period.update_status(payment_date=payment.payment_date)
 
     db.session.commit()
 
@@ -96,9 +150,18 @@ def deallocate_payment(payment):
     """Remove all allocations for a payment and reverse amounts_paid."""
     for alloc in payment.allocations:
         rp = alloc.rent_period
-        rp.amount_paid = max(Decimal("0.00"), Decimal(str(rp.amount_paid)) - Decimal(str(alloc.amount_allocated)))
+        rent_portion = Decimal(str(alloc.rent_allocated or 0))
+        fee_portion = Decimal(str(alloc.late_fee_allocated or 0))
+
+        # If the allocation predates the split fields, fall back to old logic
+        if rent_portion == 0 and fee_portion == 0 and Decimal(str(alloc.amount_allocated)) > 0:
+            rent_portion = Decimal(str(alloc.amount_allocated))
+
+        rp.amount_paid = max(Decimal("0.00"), Decimal(str(rp.amount_paid)) - rent_portion)
+        rp.late_fee_paid = max(Decimal("0.00"), Decimal(str(rp.late_fee_paid or 0)) - fee_portion)
+
         # If no payments remain against this period, clear the locked-in late fee
-        if Decimal(str(rp.amount_paid)) == 0:
+        if Decimal(str(rp.amount_paid)) == 0 and Decimal(str(rp.late_fee_paid or 0)) == 0:
             rp.late_fee = Decimal("0.00")
         rp.update_status()
         db.session.delete(alloc)
