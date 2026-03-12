@@ -1,7 +1,35 @@
 import smtplib
 import ssl
+from decimal import Decimal
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+
+
+def get_paid_periods(tenant_id):
+    """Build a list of period dicts showing what rent has been paid/partially paid.
+
+    Returns periods that have received any payment, ordered by date, so
+    the email can show tenants exactly what their money covered.
+    """
+    from ..models import RentPeriod
+    periods = (
+        RentPeriod.query
+        .filter(
+            RentPeriod.tenant_id == tenant_id,
+            RentPeriod.status.in_(["paid", "partial"]),
+        )
+        .order_by(RentPeriod.due_date.asc())
+        .all()
+    )
+    return [
+        {
+            "period_start": rp.period_start,
+            "period_end": rp.period_end,
+            "amount_due": Decimal(str(rp.amount_due)),
+            "status": rp.status,
+        }
+        for rp in periods
+    ]
 
 
 def _send(settings, to_address, subject, body_plain, body_html):
@@ -24,17 +52,69 @@ def _send(settings, to_address, subject, body_plain, body_html):
         return False, str(e)
 
 
-def send_payment_received_email(settings, tenant, amount, payment_date, overdue_remaining=None):
+def send_payment_received_email(settings, tenant, amount, payment_date,
+                                overdue_remaining=None, paid_periods=None):
     """
     Send a payment confirmation email to a tenant.
+    - paid_periods: list of dicts with period_start, period_end, amount_due, status
+      showing what the payment covered.
     - If overdue_remaining > 0: thank them but flag the outstanding arrears.
-    - If all clear: thank them and show when next rent is due.
+    - If all clear: thank them and confirm they're up to date.
     """
     property_address = tenant.property.full_address() if tenant.property else ""
     first_name = tenant.full_name.split()[0]
     still_overdue = overdue_remaining and overdue_remaining > 0
 
     subject = f"Payment Received - {'Outstanding Balance Remaining' if still_overdue else 'Thank You, ' + first_name + '!'}"
+
+    # --- Build "paid up to" breakdown ---
+    coverage_plain = ""
+    coverage_html = ""
+    if paid_periods:
+        lines = []
+        for p in paid_periods:
+            start = p["period_start"].strftime("%d %b")
+            end = p["period_end"].strftime("%d %b %Y")
+            status_label = "Paid" if p["status"] == "paid" else "Partial"
+            lines.append(f"  - {start} – {end}:  ${p['amount_due']:.2f} ({status_label})")
+        coverage_plain = "Your payment covered:\n" + "\n".join(lines) + "\n"
+
+        rows_html = ""
+        for i, p in enumerate(paid_periods):
+            start = p["period_start"].strftime("%d %b")
+            end = p["period_end"].strftime("%d %b %Y")
+            bg = "background:#f8f9fa;" if i % 2 == 0 else ""
+            if p["status"] == "paid":
+                badge = '<span style="color:#0f5132;font-weight:bold;">Paid</span>'
+            else:
+                badge = '<span style="color:#fd7e14;font-weight:bold;">Partial</span>'
+            rows_html += f"""    <tr style="{bg}">
+      <td style="padding:8px 10px;border:1px solid #dee2e6;">{start} – {end}</td>
+      <td style="padding:8px 10px;border:1px solid #dee2e6;">${p['amount_due']:.2f}</td>
+      <td style="padding:8px 10px;border:1px solid #dee2e6;">{badge}</td>
+    </tr>\n"""
+
+        # Show "Paid up to" date — the end date of the last fully paid period
+        last_paid = None
+        for p in paid_periods:
+            if p["status"] == "paid":
+                last_paid = p["period_end"]
+        paid_up_to_html = ""
+        if last_paid:
+            paid_up_to_html = f"""
+  <div style="background:#e8f5e9;border-radius:6px;padding:10px 15px;margin:0 0 15px;">
+    <strong>Paid up to:</strong> {last_paid.strftime('%d %B %Y')}
+  </div>"""
+
+        coverage_html = f"""{paid_up_to_html}
+  <p style="margin:15px 0 5px;"><strong>Payment breakdown:</strong></p>
+  <table style="border-collapse:collapse;width:100%;margin:0 0 20px;">
+    <tr style="background:#dee2e6;">
+      <th style="padding:8px 10px;border:1px solid #dee2e6;text-align:left;">Period</th>
+      <th style="padding:8px 10px;border:1px solid #dee2e6;text-align:left;">Rent</th>
+      <th style="padding:8px 10px;border:1px solid #dee2e6;text-align:left;">Status</th>
+    </tr>
+{rows_html}  </table>"""
 
     # --- Plain text ---
     if still_overdue:
@@ -49,7 +129,7 @@ def send_payment_received_email(settings, tenant, amount, payment_date, overdue_
 
 We have received your rent payment of ${amount:.2f} on {payment_date.strftime('%d %B %Y')}. Thank you — it is greatly appreciated.
 
-{status_block}
+{coverage_plain}{status_block}
 
 {"Property: " + property_address if property_address else ""}
 
@@ -89,6 +169,7 @@ Regards,
     </tr>
     {"<tr style='background:#f8f9fa;'><td style='padding:10px;border:1px solid #dee2e6;'><strong>Property</strong></td><td style='padding:10px;border:1px solid #dee2e6;'>" + property_address + "</td></tr>" if property_address else ""}
   </table>
+  {coverage_html}
   {status_html}
   <p>If you have any questions, feel free to get in touch.</p>
   <p>Regards,<br><strong>{settings.app_name}</strong></p>

@@ -69,7 +69,7 @@ def detail(tenant_id):
     payment_form = ManualPaymentForm(prefix="pay")
     if payment_form.validate_on_submit():
         from ..payments.allocator import allocate_payment
-        from ..emails.sender import send_payment_received_email
+        from ..emails.sender import send_payment_received_email, get_paid_periods
         from ..models import Settings
         payment = Payment(
             tenant_id=tenant.id,
@@ -95,6 +95,7 @@ def detail(tenant_id):
             send_payment_received_email(
                 settings, tenant, payment.amount, payment.payment_date,
                 overdue_remaining=overdue_remaining,
+                paid_periods=get_paid_periods(tenant.id),
             )
         flash("Manual payment recorded and allocated.", "success")
         return redirect(url_for("tenants.detail", tenant_id=tenant.id))

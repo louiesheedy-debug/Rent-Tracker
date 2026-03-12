@@ -165,7 +165,7 @@ def _apply_confirmed_transactions(csv_import, tenants):
     allocated, so we don't spam them with an email per transaction
     and the overdue balance reflects the post-catch-up-sweep state.
     """
-    from ..emails.sender import send_payment_received_email
+    from ..emails.sender import send_payment_received_email, get_paid_periods
     from ..models import Settings, RentPeriod
 
     txns = (
@@ -232,6 +232,7 @@ def _apply_confirmed_transactions(csv_import, tenants):
             send_payment_received_email(
                 settings, tenant, info["total"], info["latest_date"],
                 overdue_remaining=overdue_remaining,
+                paid_periods=get_paid_periods(tid),
             )
 
 
