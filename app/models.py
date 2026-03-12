@@ -116,18 +116,20 @@ class RentPeriod(db.Model):
         # Rent status based solely on whether base rent is paid
         grace_deadline = self.due_date + timedelta(days=grace_period_days)
         rent_bal = self.rent_balance()
+        past_grace = grace_deadline < date.today()
         if rent_bal <= 0:
             self.status = "paid"
             if payment_date is not None:
                 self.paid_on_time = (payment_date <= grace_deadline)
         elif Decimal(str(self.amount_paid)) == 0:
             self.paid_on_time = None
-            if grace_deadline < date.today():
+            if past_grace:
                 self.status = "overdue"
             else:
                 self.status = "unpaid"
         else:
-            self.status = "partial"
+            # Partial payment: still overdue if grace deadline has passed
+            self.status = "overdue" if past_grace else "partial"
 
         # Late fee status tracked independently
         fee = Decimal(str(self.late_fee or 0))
