@@ -143,7 +143,38 @@ def allocate_payment(payment):
                 db.session.add(alloc)
                 next_period.update_status(payment_date=payment.payment_date)
 
+    # Catch-up sweep: forgive late fees on periods where tenant has caught up
+    _catchup_sweep(tenant_id)
+
     db.session.commit()
+
+
+def _catchup_sweep(tenant_id):
+    """Forgive late fees on periods where the tenant has since caught up.
+
+    If a tenant paid a day or two late (e.g. bank delay) but then resumed
+    paying on schedule, they shouldn't be penalised. Walk periods oldest-first
+    up to today — if rent is fully paid, zero out any late fee. Stop at the
+    first period with outstanding rent.
+    """
+    periods = (
+        RentPeriod.query
+        .filter(RentPeriod.tenant_id == tenant_id)
+        .order_by(RentPeriod.due_date.asc())
+        .all()
+    )
+    today = date.today()
+    for period in periods:
+        if period.due_date > today:
+            break
+        if period.rent_balance() > 0:
+            break  # not caught up beyond this point
+        # Rent is fully paid — forgive any late fee
+        if Decimal(str(period.late_fee or 0)) > 0:
+            period.late_fee = Decimal("0.00")
+            period.late_fee_paid = Decimal("0.00")
+            period.late_fee_status = "none"
+            period.update_status()
 
 
 def deallocate_payment(payment):
