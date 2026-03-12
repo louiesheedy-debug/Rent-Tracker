@@ -17,9 +17,15 @@
             {{ form.app_name(class="form-control" + (" is-invalid" if form.app_name.errors else "")) }}
             {% for e in form.app_name.errors %}<div class="invalid-feedback">{{ e }}</div>{% endfor %}
           </div>
-          <div class="mb-4">
+          <div class="mb-3">
             {{ form.timezone.label(class="form-label") }}
             {{ form.timezone(class="form-select") }}
+          </div>
+          <div class="mb-4">
+            {{ form.grace_period_days.label(class="form-label") }}
+            {{ form.grace_period_days(class="form-control", style="max-width:100px") }}
+            <div class="form-text">Days after due date before a payment is considered late (0–14). Payments within this window incur no late fee.</div>
+            {% for e in form.grace_period_days.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
           </div>
 
           <h5 class="text-primary mb-3">Email Reminders</h5>

@@ -31,6 +31,10 @@ class SettingsForm(FlaskForm):
         "Daily Reminder Hour (0-23)",
         validators=[DataRequired(), NumberRange(min=0, max=23)],
     )
+    grace_period_days = IntegerField(
+        "Late Fee Grace Period (days)",
+        validators=[DataRequired(), NumberRange(min=0, max=14)],
+    )
     test_email_address = StringField("Send Test Email To", validators=[Optional(), Email()])
 
     def __init__(self, *args, **kwargs):

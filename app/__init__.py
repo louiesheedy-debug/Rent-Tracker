@@ -61,6 +61,13 @@ def _migrate_db():
             conn.commit()
         except Exception:
             pass  # Column already exists
+        try:
+            conn.execute(db.text(
+                "ALTER TABLE settings ADD COLUMN grace_period_days INTEGER NOT NULL DEFAULT 2"
+            ))
+            conn.commit()
+        except Exception:
+            pass  # Column already exists
 
 
 def _seed_owner():

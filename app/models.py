@@ -1,4 +1,4 @@
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from decimal import Decimal
 from flask_sqlalchemy import SQLAlchemy
 db = SQLAlchemy()
@@ -25,6 +25,7 @@ class Settings(db.Model):
     smtp_app_password = db.Column(db.String(256), default="")
     app_name = db.Column(db.String(128), default="Rent Tracker")
     reminder_hour = db.Column(db.Integer, default=9)
+    grace_period_days = db.Column(db.Integer, default=2, server_default="2", nullable=False)
 
     user = db.relationship("User", back_populates="settings")
 
@@ -111,16 +112,17 @@ class RentPeriod(db.Model):
         """Total outstanding (rent + late fee)."""
         return self.rent_balance() + self.late_fee_balance()
 
-    def update_status(self, payment_date=None):
+    def update_status(self, payment_date=None, grace_period_days=0):
         # Rent status based solely on whether base rent is paid
+        grace_deadline = self.due_date + timedelta(days=grace_period_days)
         rent_bal = self.rent_balance()
         if rent_bal <= 0:
             self.status = "paid"
             if payment_date is not None:
-                self.paid_on_time = (payment_date <= self.due_date)
+                self.paid_on_time = (payment_date <= grace_deadline)
         elif Decimal(str(self.amount_paid)) == 0:
             self.paid_on_time = None
-            if self.due_date < date.today():
+            if grace_deadline < date.today():
                 self.status = "overdue"
             else:
                 self.status = "unpaid"

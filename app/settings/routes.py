@@ -35,6 +35,7 @@ def index():
             settings.smtp_app_password = form.smtp_app_password.data
         settings.app_name = form.app_name.data
         settings.reminder_hour = form.reminder_hour.data
+        settings.grace_period_days = form.grace_period_days.data
         db.session.commit()
         flash("Settings saved.", "success")
         return redirect(url_for("settings.index"))

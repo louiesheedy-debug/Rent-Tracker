@@ -8,23 +8,30 @@ Two-pass allocation:
 This ensures rent always takes priority over late fees, so a tenant who
 pays their full rent is never marked overdue just because of a late fee.
 """
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from sqlalchemy import or_
-from ..models import db, RentPeriod, PaymentAllocation
+from ..models import db, RentPeriod, PaymentAllocation, Settings
 
 
-def _compute_late_fee(period, as_of_date=None):
+def _get_grace_days():
+    """Load grace period from settings, with a safe fallback."""
+    s = Settings.query.first()
+    return s.grace_period_days if s else 0
+
+
+def _compute_late_fee(period, as_of_date=None, grace_period_days=0):
     """
-    Calculate the late fee for an overdue period based on days past the due date.
-    Daily rate = fortnightly_rent / 14, charged per day overdue.
-    as_of_date defaults to today (for display), but should be set to the
-    payment date when allocating payments.
+    Calculate the late fee for an overdue period based on days past the
+    grace deadline.  The fee clock starts AFTER the grace window, so a
+    payment within the grace period incurs no fee at all.
+    Daily rate = fortnightly_rent / 14, charged per day late.
     """
     ref_date = as_of_date or date.today()
-    if ref_date <= period.due_date:
+    grace_deadline = period.due_date + timedelta(days=grace_period_days)
+    if ref_date <= grace_deadline:
         return Decimal("0.00")
-    days_late = (ref_date - period.due_date).days
+    days_late = (ref_date - grace_deadline).days
     daily_rate = Decimal(str(period.tenant.weekly_rent)) / Decimal("14")
     return (daily_rate * days_late).quantize(Decimal("0.01"))
 
@@ -43,6 +50,7 @@ def allocate_payment(payment):
     """
     tenant_id = payment.tenant_id
     remaining = Decimal(str(payment.amount))
+    grace = _get_grace_days()
 
     # Get all periods that need payment: unpaid/partial/overdue rent OR outstanding late fees
     periods = (
@@ -64,7 +72,7 @@ def allocate_payment(payment):
     # Lock in late fees for periods with unpaid rent
     for period in periods:
         if period.status in ("unpaid", "partial", "overdue"):
-            computed_fee = _compute_late_fee(period, payment.payment_date)
+            computed_fee = _compute_late_fee(period, payment.payment_date, grace_period_days=grace)
             current_fee = Decimal(str(period.late_fee or 0))
             if Decimal(str(period.amount_paid)) == 0 and Decimal(str(period.late_fee_paid or 0)) == 0:
                 # First payment against this period: always use the real fee
@@ -113,7 +121,7 @@ def allocate_payment(payment):
                 late_fee_allocated=info["fee"],
             )
             db.session.add(alloc)
-        info["period"].update_status(payment_date=payment.payment_date)
+        info["period"].update_status(payment_date=payment.payment_date, grace_period_days=grace)
 
     # If there's still remaining (overpayment), apply to next unpaid period
     if remaining > 0:
@@ -141,15 +149,15 @@ def allocate_payment(payment):
                     late_fee_allocated=Decimal("0.00"),
                 )
                 db.session.add(alloc)
-                next_period.update_status(payment_date=payment.payment_date)
+                next_period.update_status(payment_date=payment.payment_date, grace_period_days=grace)
 
     # Catch-up sweep: forgive late fees on periods where tenant has caught up
-    _catchup_sweep(tenant_id)
+    _catchup_sweep(tenant_id, grace)
 
     db.session.commit()
 
 
-def _catchup_sweep(tenant_id):
+def _catchup_sweep(tenant_id, grace_period_days=0):
     """Forgive late fees only for one-off late payments, not chronic lateness.
 
     A late fee is forgiven only when the NEXT period was paid on time,
@@ -179,11 +187,12 @@ def _catchup_sweep(tenant_id):
             period.late_fee = Decimal("0.00")
             period.late_fee_paid = Decimal("0.00")
             period.late_fee_status = "none"
-            period.update_status()
+            period.update_status(grace_period_days=grace_period_days)
 
 
 def deallocate_payment(payment):
     """Remove all allocations for a payment and reverse amounts_paid."""
+    grace = _get_grace_days()
     for alloc in payment.allocations:
         rp = alloc.rent_period
         rent_portion = Decimal(str(alloc.rent_allocated or 0))
@@ -199,6 +208,6 @@ def deallocate_payment(payment):
         # If no payments remain against this period, clear the locked-in late fee
         if Decimal(str(rp.amount_paid)) == 0 and Decimal(str(rp.late_fee_paid or 0)) == 0:
             rp.late_fee = Decimal("0.00")
-        rp.update_status()
+        rp.update_status(grace_period_days=grace)
         db.session.delete(alloc)
     db.session.commit()

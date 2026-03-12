@@ -4,7 +4,7 @@ from flask import render_template, redirect, url_for, flash, request
 from . import bp
 from .forms import TenantForm
 from .logic import generate_rent_periods, extend_rent_periods, compute_tenant_status
-from ..models import db, Tenant, Property, Payment, RentPeriod
+from ..models import db, Tenant, Property, Payment, RentPeriod, Settings
 
 from flask_wtf import FlaskForm
 from wtforms import DecimalField, StringField, TextAreaField
@@ -70,7 +70,6 @@ def detail(tenant_id):
     if payment_form.validate_on_submit():
         from ..payments.allocator import allocate_payment
         from ..emails.sender import send_payment_received_email, get_paid_periods
-        from ..models import Settings
         payment = Payment(
             tenant_id=tenant.id,
             amount=payment_form.amount.data,
@@ -109,10 +108,12 @@ def detail(tenant_id):
     )
     # Compute display-only late fees for unpaid/overdue periods (not persisted to DB)
     from ..payments.allocator import _compute_late_fee
+    settings_for_grace = Settings.query.filter_by(user_id=OWNER_ID).first()
+    grace = settings_for_grace.grace_period_days if settings_for_grace else 0
     display_late_fees = {}
     for rp in rent_periods:
         if rp.status in ("unpaid", "overdue") and Decimal(str(rp.amount_paid)) == 0:
-            display_late_fees[rp.id] = _compute_late_fee(rp)
+            display_late_fees[rp.id] = _compute_late_fee(rp, grace_period_days=grace)
     payments = (
         Payment.query.filter_by(tenant_id=tenant.id)
         .order_by(Payment.payment_date.desc())
@@ -168,11 +169,13 @@ def edit(tenant_id):
                 tenant.property_id = prop.id
 
         # Update unpaid/overdue rent periods with the new rent amount
+        edit_settings = Settings.query.filter_by(user_id=OWNER_ID).first()
+        edit_grace = edit_settings.grace_period_days if edit_settings else 0
         new_amount = tenant.rent_amount()
         for rp in tenant.rent_periods:
             if rp.status not in ("paid",):
                 rp.amount_due = new_amount
-                rp.update_status()
+                rp.update_status(grace_period_days=edit_grace)
 
         db.session.commit()
         flash("Tenant updated.", "success")

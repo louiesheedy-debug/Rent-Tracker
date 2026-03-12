@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 from dateutil.relativedelta import relativedelta
 from decimal import Decimal
-from ..models import db, RentPeriod
+from ..models import db, RentPeriod, Settings
 
 
 def generate_rent_periods(tenant, months_ahead=6):
@@ -68,6 +68,8 @@ def compute_tenant_status(tenant):
     (with the correct payment_date context) and must not be re-evaluated
     against today's date.
     """
+    s = Settings.query.first()
+    grace = s.grace_period_days if s else 0
     today = date.today()
     statuses = []
     for rp in tenant.rent_periods:
@@ -76,7 +78,7 @@ def compute_tenant_status(tenant):
         # Only recompute for non-paid periods (unpaid/partial/overdue).
         # Paid periods must keep their allocator-set status.
         if rp.status != "paid":
-            rp.update_status()
+            rp.update_status(grace_period_days=grace)
         statuses.append(rp.status)
 
     order = ["overdue", "partial", "unpaid", "paid"]
@@ -92,7 +94,9 @@ def refresh_period_statuses(tenant):
     Paid periods keep their allocator-set status (which was computed
     with the correct payment_date context).
     """
+    s = Settings.query.first()
+    grace = s.grace_period_days if s else 0
     for rp in tenant.rent_periods:
         if rp.status != "paid":
-            rp.update_status()
+            rp.update_status(grace_period_days=grace)
     db.session.commit()

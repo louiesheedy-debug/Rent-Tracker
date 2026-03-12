@@ -28,19 +28,22 @@ def send_overdue_reminders(app):
             if not settings:
                 continue
 
+            grace = getattr(settings, 'grace_period_days', 0) or 0
             tenants = Tenant.query.filter_by(user_id=user.id, is_active=True).all()
             today = date.today()
 
             for tenant in tenants:
+                # Only consider periods overdue AFTER the grace window
                 overdue_periods = [
                     rp for rp in tenant.rent_periods
-                    if rp.due_date < today and rp.status in ("unpaid", "partial", "overdue")
+                    if rp.due_date + timedelta(days=grace) < today
+                    and rp.status in ("unpaid", "partial", "overdue")
                 ]
                 if not overdue_periods:
                     continue
 
                 earliest = min(overdue_periods, key=lambda rp: rp.due_date)
-                days_overdue = (today - earliest.due_date).days
+                days_overdue = (today - earliest.due_date).days - grace
 
                 # Don't send until we're sure it's genuinely overdue,
                 # not just a bank delay that'll clear in a day or two
