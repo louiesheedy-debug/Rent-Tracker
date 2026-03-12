@@ -150,12 +150,11 @@ def allocate_payment(payment):
 
 
 def _catchup_sweep(tenant_id):
-    """Forgive late fees on periods where the tenant has since caught up.
+    """Forgive late fees only for one-off late payments, not chronic lateness.
 
-    If a tenant paid a day or two late (e.g. bank delay) but then resumed
-    paying on schedule, they shouldn't be penalised. Walk periods oldest-first
-    up to today — if rent is fully paid, zero out any late fee. Stop at the
-    first period with outstanding rent.
+    A late fee is forgiven only when the NEXT period was paid on time,
+    proving it was a one-off (e.g. bank delay). If the tenant keeps
+    paying late period after period, the fees stick.
     """
     periods = (
         RentPeriod.query
@@ -164,13 +163,19 @@ def _catchup_sweep(tenant_id):
         .all()
     )
     today = date.today()
-    for period in periods:
+    for i, period in enumerate(periods):
         if period.due_date > today:
             break
         if period.rent_balance() > 0:
-            break  # not caught up beyond this point
-        # Rent is fully paid — forgive any late fee
-        if Decimal(str(period.late_fee or 0)) > 0:
+            continue  # rent not fully paid, skip
+        if Decimal(str(period.late_fee or 0)) <= 0:
+            continue  # no late fee to forgive
+
+        # Check if the next period exists and was paid on time
+        next_period = periods[i + 1] if i + 1 < len(periods) else None
+        if (next_period
+                and next_period.rent_balance() <= 0
+                and next_period.paid_on_time is True):
             period.late_fee = Decimal("0.00")
             period.late_fee_paid = Decimal("0.00")
             period.late_fee_status = "none"
