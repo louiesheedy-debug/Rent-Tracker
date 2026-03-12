@@ -159,9 +159,14 @@ def review(import_id):
 
 
 def _apply_confirmed_transactions(csv_import, tenants):
-    """Create Payment records and allocate for all auto/manual matched transactions."""
+    """Create Payment records and allocate for all auto/manual matched transactions.
+
+    Sends one summary email per tenant after all their payments are
+    allocated, so we don't spam them with an email per transaction
+    and the overdue balance reflects the post-catch-up-sweep state.
+    """
     from ..emails.sender import send_payment_received_email
-    from ..models import Settings
+    from ..models import Settings, RentPeriod
 
     txns = (
         BankTransaction.query.filter(
@@ -176,6 +181,9 @@ def _apply_confirmed_transactions(csv_import, tenants):
 
     tenant_map = {t.id: t for t in tenants}
     settings = Settings.query.filter_by(user_id=OWNER_ID).first()
+
+    # Track total paid per tenant so we can send one email each
+    tenant_totals = {}  # {tenant_id: {"total": Decimal, "latest_date": date}}
 
     for txn in txns:
         tenant = tenant_map.get(txn.matched_tenant_id)
@@ -194,11 +202,37 @@ def _apply_confirmed_transactions(csv_import, tenants):
         allocate_payment(payment)
         txn.matched_payment_id = payment.id
         txn.match_status = "manual_matched"
-        if settings:
-            send_payment_received_email(settings, tenant, payment.amount, payment.payment_date)
+
+        # Accumulate totals per tenant
+        if tenant.id not in tenant_totals:
+            tenant_totals[tenant.id] = {
+                "total": Decimal("0.00"),
+                "latest_date": payment.payment_date,
+            }
+        tenant_totals[tenant.id]["total"] += Decimal(str(payment.amount))
+        if payment.payment_date > tenant_totals[tenant.id]["latest_date"]:
+            tenant_totals[tenant.id]["latest_date"] = payment.payment_date
 
     csv_import.status = "complete"
     db.session.commit()
+
+    # Send one email per tenant with correct post-allocation state
+    if settings:
+        for tid, info in tenant_totals.items():
+            tenant = tenant_map.get(tid)
+            if not tenant:
+                continue
+            overdue_remaining = sum(
+                rp.rent_balance() for rp in
+                RentPeriod.query.filter(
+                    RentPeriod.tenant_id == tid,
+                    RentPeriod.status.in_(["overdue", "partial"]),
+                ).all()
+            )
+            send_payment_received_email(
+                settings, tenant, info["total"], info["latest_date"],
+                overdue_remaining=overdue_remaining,
+            )
 
 
 @bp.route("/payment/<int:payment_id>/delete", methods=["POST"])
