@@ -1,14 +1,23 @@
 import logging
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
 _scheduler = None
 
+# Don't email until this many days past due — gives time for bank
+# transfers to clear so we're not emailing about a payment that's
+# already on its way.
+MIN_DAYS_BEFORE_REMINDER = 3
+
+# After the first reminder, only send follow-ups once per week
+# (not every single day).
+REMINDER_INTERVAL_DAYS = 7
+
 
 def send_overdue_reminders(app):
-    """Daily job: send email reminders to all overdue tenants."""
+    """Daily job: send email reminders to confirmed-overdue tenants."""
     with app.app_context():
         from ..models import db, Tenant, RentPeriod, EmailLog, Settings, User
         from .sender import send_reminder_email
@@ -30,17 +39,28 @@ def send_overdue_reminders(app):
                 if not overdue_periods:
                     continue
 
-                # Check if already sent today
-                already_sent = EmailLog.query.filter(
-                    EmailLog.tenant_id == tenant.id,
-                    db.func.date(EmailLog.sent_at) == today,
-                    EmailLog.status == "sent",
-                ).first()
-                if already_sent:
-                    continue
-
                 earliest = min(overdue_periods, key=lambda rp: rp.due_date)
                 days_overdue = (today - earliest.due_date).days
+
+                # Don't send until we're sure it's genuinely overdue,
+                # not just a bank delay that'll clear in a day or two
+                if days_overdue < MIN_DAYS_BEFORE_REMINDER:
+                    continue
+
+                # Only send follow-up reminders once per week, not daily
+                last_sent = (
+                    EmailLog.query.filter(
+                        EmailLog.tenant_id == tenant.id,
+                        EmailLog.status == "sent",
+                    )
+                    .order_by(EmailLog.sent_at.desc())
+                    .first()
+                )
+                if last_sent:
+                    days_since_last = (today - last_sent.sent_at.date()).days
+                    if days_since_last < REMINDER_INTERVAL_DAYS:
+                        continue
+
                 total_overdue = sum(
                     Decimal(str(rp.amount_due)) - Decimal(str(rp.amount_paid))
                     for rp in overdue_periods
